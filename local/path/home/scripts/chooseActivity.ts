@@ -6,19 +6,21 @@ export async function main(ns: NS) {
 
   globals = JSON.parse(ns.read(file));
   if (globals.activityType === 'FACTION') {
+    await run(ns, 'scripts/workForFaction.ts');
     return
   }
   let limits = {
-    strength: 50,
-    defence: 50,
-    dexterity: 50,
-    agility: 50
+    strength: 20,
+    defence: 20,
+    dexterity: 20,
+    agility: 20
   }
   // early game mug
-  if (ns.singularity.getOwnedAugmentations().length < 30) {
+  if (globals.lastBatchMoneyGain < 1000000) {
     await trainUntill(ns, limits);
     return
   }
+
 
   if (!ns.gang.inGang() && globals.startGang) {
     // current stats will give just under 85% chance success for homicide
@@ -33,21 +35,24 @@ export async function main(ns: NS) {
     await run(ns, 'scripts/commitCrime.ts', ['Homicide']);
   }
   else {
-    limits = {
-      strength: 850,
-      defence: 850,
-      dexterity: 850,
-      agility: 850
-    }
 
-    // limits above are for covenant, if augment is already available, switch to illuminatie
-    if (ns.singularity.getOwnedAugmentations().some((ownedAugment) => ownedAugment === 'SPTN-97 Gene Modification')) {
-      limits.strength = 1200;
-      limits.defence = 1200;
-      limits.dexterity = 1200;
-      limits.agility = 1200;
-    }
-    await trainUntill(ns, limits);
+    ns.write(file, JSON.stringify(globals), 'w');
+    /*
+       limits = {
+         strength: 850,
+         defence: 850,
+         dexterity: 850,
+         agility: 850
+       }
+   
+       // limits above are for covenant, if augment is already available, switch to illuminatie
+       if (ns.singularity.getOwnedAugmentations().some((ownedAugment) => ownedAugment === 'SPTN-97 Gene Modification')) {
+         limits.strength = 1200;
+         limits.defence = 1200;
+         limits.dexterity = 1200;
+         limits.agility = 1200;
+       }
+       await trainUntill(ns, limits);*/
   }
   await run(ns, 'scripts/workForFaction.ts');
 

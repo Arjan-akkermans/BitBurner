@@ -1,9 +1,9 @@
 import { sortAugments, getXpNeeded } from './utils'
-import { infectServer, getServerToHack } from './utils'
+import { infectServer, getServerToHack, getAllServers } from './utils'
 import { getProduction, getProductionDifference, getNodeCost } from './upgrade-hacknet'
 import { buyAugmentsFromGang } from './checkBuyAndInstallAugments'
 export async function main(ns: NS) {
-  ns.tprint(getNodeCost(ns, ns.hacknet.getNodeStats(0)));
+  ns.tprint();
 }
 
 export function rigCasino(ns: NS) {

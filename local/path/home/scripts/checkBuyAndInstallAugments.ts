@@ -3,6 +3,7 @@ import { sortAugments } from './utils'
 import { getAllServers } from './utils'
 import { run } from './autoPlay'
 let file = 'data/globals.json';
+const neuroFluxGovernor = 'NeuroFlux Governor'
 export async function main(ns: NS) {
   let globals = JSON.parse(ns.read(file)) as Globals
   if (globals.activityType === 'CLASS') {
@@ -24,8 +25,8 @@ export async function main(ns: NS) {
     ns.run('scripts/installAugments.ts');
   }
 
-  if (ns.gang.inGang) {
-    if (buyAugmentsFromGang(ns)) {
+  if (ns.gang.inGang()) {
+    if (await buyAugmentsFromGang(ns)) {
       return;
     }
   }
@@ -36,30 +37,49 @@ export async function main(ns: NS) {
     let augments = x.augmentsToBuy;
   
     if (!!factionName) {
-      buy(ns, factionName, augments);
+      await buy(ns, factionName, augments);
       return
     }*/
 
   let augments = [] as string[]
   let factionName = getEarliestFactionWithUnique(ns);
-  if (!!factionName) {
 
-    globals.factionToWorkFor = factionName;
-    ns.write(file, JSON.stringify(globals), 'w')
-    if (factionName === ns.enums.FactionName.CyberSec) {
-      augments = ['Neurotrainer I', 'Synaptic Enhancement Implant', 'BitWire']
+
+  if (!!factionName) {
+    let augmentsToBuy = getAugmentsUnilUnique(ns, factionName);
+    augmentsToBuy = sortAugments(ns, augmentsToBuy);
+    let moneyCost = getAugmentsCost(ns, augmentsToBuy);
+    let repCost = getRepCost(ns, augmentsToBuy);
+
+    if (globals.lastBatchMoneyGain * 50 > moneyCost) {
+      globals.skip = true;
     }
-    else {
-      const augmentsOfFaction = ns.singularity.getAugmentationsFromFaction(factionName);
-      for (let i = 0; i < augmentsOfFaction.length; i++) {
-        if (!ownedAugments.includes(augmentsOfFaction[i])) {
-          // exlude expensive non faction unique:
-          if (!(factionName === ns.enums.FactionName.NiteSec && augmentsOfFaction[i] === 'DataJack')
-            && !(factionName === ns.enums.FactionName.TheBlackHand && augmentsOfFaction[i] === 'Embedded Netburner Module Core Implant')
-            && !(factionName === ns.enums.FactionName.TheBlackHand && augmentsOfFaction[i] === 'Cranial Signal Processors - Gen IV')) { augments.push(augmentsOfFaction[i]); }
-        }
+    let factionRep = ns.singularity.getFactionRep(factionName);
+    if (ns.singularity.getFactionFavor(factionName) > ns.getFavorToDonate() && factionRep < repCost) {
+      // if can donate, do it first before sharing ram
+
+      let moneyToDonate = Math.max(ns.formulas.reputation.donationForRep(repCost - factionRep, ns.getPlayer()), 0)
+
+      let success = ns.singularity.donateToFaction(factionName, moneyToDonate);
+      if (!success) {
+        // not enough money?
+        return
       }
+
     }
+
+    // mostly intended for early game, if neuroFlux is not limited by rep, then get some more money such that a few stacks can be bought
+    if (ns.singularity.getAugmentationRepReq(neuroFluxGovernor) < repCost) {
+      moneyCost *= 1.5;
+    }
+    if (ns.getServerMoneyAvailable('home') > moneyCost) {
+      globals.shareRam = true;
+      ns.tprint('running and waiting share all')
+      await run(ns, 'scripts/share-all-loop.ts', [repCost, ns.singularity.getFactionFavor(factionName) + 50]);
+      await buy(ns, factionName, augmentsToBuy);
+    }
+
+    ns.write(file, JSON.stringify(globals), 'w');
   }
   else {
     const augmentsOfFaction = ns.singularity.getAugmentationsFromFaction(ns.enums.FactionName.Sector12);
@@ -92,7 +112,7 @@ export async function main(ns: NS) {
     if (hasMoney && hasRep) {
 
       // buy and install!
-      buy(ns, factionName, augments);
+      await buy(ns, factionName, augments);
     }
     // no money but rep (unlikely?) set skip to true such that no money is spend
     else if (hasRep) {
@@ -117,47 +137,58 @@ export async function main(ns: NS) {
         }
         // run share loop which shares ram untill a good breakpoint for rep/favor is reached. then just buy all and reset
         // TODO: refactor such that this ram is freed up?
+        // TODO: FIX ME
+
         ns.tprint('running and waiting share all')
         await run(ns, 'scripts/share-all-loop.ts');
         const augmentsfiltered = augments.filter((augment) => {
           return ns.singularity.getAugmentationRepReq(augment) <= ns.singularity.getFactionRep(factionName)
         })
-        buy(ns, factionName, augmentsfiltered);
+        await buy(ns, factionName, augmentsfiltered);
       }
     }
   }
 }
 
 
-export function buy(ns: NS, factionName: string, augments: string[]) {
+export async function buy(ns: NS, factionName: string, augments: string[]) {
   let success = true;
+  await run(ns, 'scripts/sellStocks.ts');
+  augments = addToBuy(ns, augments);
+  augments = sortAugments(ns, augments);
 
-  ns.write('data/log/buyAugments.txt', ' buying augments at ' + (new Date().getTime) + '/n', 'a')
+  ns.write('data/log/buyAugments.txt', ' buying augments at ' + (new Date().getTime()) + '\n', 'a')
   for (let i = 0; i < augments.length; i++) {
-    ns.write('data/log/buyAugments.txt', 'buying augment ' + augments[i] + ' /n', 'a')
-    success = ns.singularity.purchaseAugmentation(factionName, augments[i]);
-  }
+    let factionToBuyFrom = getFactionToBuy(ns, augments[i]);
+    if (!!factionToBuyFrom) {
+      ns.write('data/log/buyAugments.txt', 'buying augment ' + augments[i] + ' from ' + factionToBuyFrom + ' \n', 'a')
+      success = ns.singularity.purchaseAugmentation(factionToBuyFrom, augments[i]);
+    }
+    else {
+      ns.write('data/log/buyAugments.txt', 'cant buy ' + augments[i] + ' because factionToBuy is undefined' + ' \n', 'a')
+    }
 
+  }
 
   // buy ram/core
   let counter = 0;
   while (ns.singularity.getUpgradeHomeRamCost() <= (ns.getServerMoneyAvailable('home') / 10)
     && counter <= 100) {
     counter++
-    ns.write('data/log/buyAugments.txt', 'upgrade Ram /n', 'a')
+    ns.write('data/log/buyAugments.txt', 'upgrade Ram \n', 'a')
     ns.singularity.upgradeHomeRam();
   }
   counter = 0;
   while (ns.singularity.getUpgradeHomeCoresCost() <= (ns.getServerMoneyAvailable('home') / 10)
     && counter <= 100) {
     counter++
-    ns.write('data/log/buyAugments.txt', 'upgrade Cores /n', 'a')
+    ns.write('data/log/buyAugments.txt', 'upgrade Cores \n', 'a')
     ns.singularity.upgradeHomeCores();
   }
 
   // get the faction with highest rep for buying neuroflux governer (and this also filters out gang which does not have it)
   let factionNameForGovernor = factionName;
-  const neuroFluxGovernor = 'NeuroFlux Governor'
+
   let factionNames = ns.getPlayer().factions;
   for (let i = 0; i < factionNames.length; i++) {
     if (hasAugment(ns, factionNames[i], neuroFluxGovernor)) {
@@ -171,7 +202,7 @@ export function buy(ns: NS, factionName: string, augments: string[]) {
   // buy NeuroFlux with remaining money
   success = true;
   while (success) {
-    ns.write('data/log/buyAugments.txt', 'buy NeuroFlux Governer /n', 'a')
+    ns.write('data/log/buyAugments.txt', 'buy NeuroFlux Governer \n', 'a')
     success = ns.singularity.purchaseAugmentation(factionNameForGovernor, neuroFluxGovernor);
   }
 
@@ -180,14 +211,14 @@ export function buy(ns: NS, factionName: string, augments: string[]) {
   while (ns.singularity.getUpgradeHomeRamCost() <= (ns.getServerMoneyAvailable('home'))
     && counter <= 100) {
     counter++
-    ns.write('data/log/buyAugments.txt', 'upgrade Ram /n', 'a')
+    ns.write('data/log/buyAugments.txt', 'upgrade Ram \n', 'a')
     ns.singularity.upgradeHomeRam();
   }
   counter = 0;
   while (ns.singularity.getUpgradeHomeCoresCost() <= (ns.getServerMoneyAvailable('home'))
     && counter <= 100) {
     counter++
-    ns.write('data/log/buyAugments.txt', 'upgrade Cores /n', 'a')
+    ns.write('data/log/buyAugments.txt', 'upgrade Cores \n', 'a')
     ns.singularity.upgradeHomeCores();
   }
 
@@ -196,7 +227,7 @@ export function buy(ns: NS, factionName: string, augments: string[]) {
   success = true;
   let player = ns.getPlayer();
   while (success && ns.singularity.getFactionFavor(factionNameForGovernor) > ns.getFavorToDonate()) {
-    ns.write('data/log/buyAugments.txt', 'buy NeuroFlux Governer after donating /n', 'a');
+    ns.write('data/log/buyAugments.txt', 'buy NeuroFlux Governer after donating \n', 'a');
     let currentRep = ns.singularity.getFactionRep(factionNameForGovernor);
     let nextRep = ns.singularity.getAugmentationRepReq(neuroFluxGovernor);
     let moneyToDonate = Math.max(ns.formulas.reputation.donationForRep(nextRep - currentRep, player), 0)
@@ -211,12 +242,45 @@ export function buy(ns: NS, factionName: string, augments: string[]) {
 }
 
 export function hasMoneyForAugments(ns: NS, augments: string[]) {
+  return getAugmentsCost(ns, augments) <= ns.getServerMoneyAvailable('home');
+}
 
-  let moneyRequired = 0;
-  for (let i = 0; i < augments.length; i++) { // 2 instead of 1.9 as also some more money is desired
-    moneyRequired += ns.singularity.getAugmentationBasePrice(augments[i]) * ns.getBitNodeMultipliers().AugmentationMoneyCost * Math.pow(2, i)
+// returns any faction from which the augment can be bought (considering current rep)
+// returns undefined if does not exist
+export function getFactionToBuy(ns: NS, augment: string) {
+  let faction = undefined;
+  let factions = ns.getPlayer().factions;
+
+  let factionsWithAugment = ns.singularity.getAugmentationFactions(augment);
+
+  let repReq = ns.singularity.getAugmentationRepReq(augment);
+
+  for (let factionI of factionsWithAugment) {
+    if (factions.includes(factionI) && ns.singularity.getFactionRep(factionI) >= repReq) {
+      faction = factionI;
+      break;
+    }
   }
-  return moneyRequired <= ns.getServerMoneyAvailable('home');
+
+  return faction;
+}
+
+export function getAugmentsCost(ns: NS, augments: string[]) {
+  let moneyRequired = 0;
+
+  // check price on sorted set, sorting ensures reqs are in correct order and sorts based on price
+  let augmentsSorted = sortAugments(ns, augments);
+  for (let i = 0; i < augmentsSorted.length; i++) { // 2 instead of 1.9 as also some more money is desired
+
+    moneyRequired += ns.singularity.getAugmentationBasePrice(augmentsSorted[i]) * Math.pow(2, i);
+  }
+
+  return moneyRequired;
+}
+
+export function getRepCost(ns: NS, augments: string[]) {
+  let maxRep = augments.reduce((prev, augment) => Math.max(ns.singularity.getAugmentationRepReq(augment), prev), 0);
+  return maxRep;
 }
 
 export function hasRepForAugments(ns: NS, augments: string[], factionName: string) {
@@ -228,57 +292,8 @@ export function hasRepForAugments(ns: NS, augments: string[], factionName: strin
 export function hasAugment(ns: NS, faction: string, augment: string) {
   return ns.singularity.getAugmentationsFromFaction(faction).some((augmentOfFaction) => augmentOfFaction === augment)
 }
-
-/* returns a faction which has hacking augments and from which all augments can be bought*/
-export function getFactionToBuyGreedy(ns: NS) {
-
-  const factions = ns.getPlayer().factions;
-  const ownedAugmentations = ns.singularity.getOwnedAugmentations();
-  let augmentsToBuy = [] as string[];
-  let currentBestEvaluation = 0;
-  let factionToBuyFrom = undefined;
-  for (let i = 0; i < factions.length; i++) {
-    let augmentsToBuyLoop = [] as string[];
-    // get the set of all augmentations that are not yet bought from this faction
-    // consider only factions from which all augmentations can be bought
-    // among those buy the one with highest evaluation
-    const augmentationsFromFaction = ns.singularity.getAugmentationsFromFaction(factions[i]);
-    for (let j = 0; j < augmentationsFromFaction.length; j++) {
-      if (!ownedAugmentations.includes(augmentationsFromFaction[j])) {
-        augmentsToBuyLoop.push(augmentationsFromFaction[j])
-      }
-    }
-    if (augmentsToBuyLoop.length > 0) {
-      // sort on descending cost and dependencies
-      augmentsToBuyLoop = sortAugments(ns, augmentsToBuyLoop)
-
-      let hasMoney = hasMoneyForAugments(ns, augmentsToBuyLoop);
-      let hasRep = hasRepForAugments(ns, augmentsToBuyLoop, factions[i]);
-      if (hasMoney && hasRep) {
-        const objective = augmentsToBuyLoop.reduce((counter, augment) => {
-          const stats = ns.singularity.getAugmentationStats(augment);
-          // bit or a random evaluation, but hacking should be most important!
-          return counter + (100 * (stats.hacking - 1))
-            + stats.hacking_speed - 1
-            + stats.hacking_grow - 1
-            + stats.hacking_money - 1
-            + stats.hacking_exp - 1
-        }
-          , 0);
-        if (objective > currentBestEvaluation) {
-          currentBestEvaluation = objective;
-          factionToBuyFrom = factions[i];
-          augmentsToBuy = [...augmentsToBuyLoop];
-
-        }
-      }
-    }
-  }
-  return { factionToBuyFrom, augmentsToBuy };
-}
-
 // returns TRUE if anything is bought
-export function buyAugmentsFromGang(ns: NS) {
+export async function buyAugmentsFromGang(ns: NS) {
   const ownedAugments = ns.singularity.getOwnedAugmentations()
   let gangInformation = ns.gang.getGangInformation();
   let factionName = gangInformation.faction;
@@ -320,10 +335,135 @@ export function buyAugmentsFromGang(ns: NS) {
         augmentsToBuy.push(augmentsFiltered[i])
       }
       augmentsToBuy = augmentsToBuy.slice(0, i - 1);
-      buy(ns, factionName, augmentsToBuy);
+      await buy(ns, factionName, augmentsToBuy);
       return true;
     }
   }
 
   return false;
 }
+
+// add any augments which are buyable
+export function addToBuy(ns: NS, augments: string[]) {
+
+  let factions = ns.getPlayer().factions;
+  let ownedAugmentations = ns.singularity.getOwnedAugmentations(true);
+  ownedAugmentations = ownedAugmentations.concat(augments);
+  let newAugments = new Set<string>;
+  let augmentsToBuy = [...augments];
+
+  // get all augments which are available and not yet owned/in input set
+  for (let faction of factions) {
+    let augmentsOfFaction = ns.singularity.getAugmentationsFromFaction(faction);
+    for (let augment of augmentsOfFaction) {
+      let factionRep = ns.singularity.getFactionRep(faction);
+      if (factionRep >= ns.singularity.getAugmentationRepReq(augment)
+        && !ownedAugmentations.includes(augment)) {
+        newAugments.add(augment);
+      }
+    }
+  }
+  let newAugmentsToConsider = [...newAugments];
+  let counter = 0;
+  while (newAugmentsToConsider.length > 0 && counter < 1000) {
+    counter++;
+    ns.tprint(counter);
+    ns.tprint('newAugmentsToConsider', newAugmentsToConsider)
+    let augmentsAvailable = ownedAugmentations.concat(augmentsToBuy);
+    ns.tprint('newAugments Available');
+    let augmentsThisIteration = newAugmentsToConsider.filter((newAugment) => hasAllPreReqs(ns, newAugment, augmentsAvailable));
+    if (augmentsThisIteration.length === 0) {
+      break;
+    }
+    augmentsThisIteration.sort((a, b) => {
+      let statsA = ns.singularity.getAugmentationStats(a);
+      let statsB = ns.singularity.getAugmentationStats(b);
+
+      if (statsB.hacking > statsA.hacking) {
+        return -1
+      }
+      else if (statsB.hacking_speed > statsA.hacking_speed) {
+        return -1
+      }
+      else if (statsB.hacking_grow > statsA.hacking_grow) {
+        return -1
+      }
+      else if (statsB.hacking_exp > statsA.hacking_exp) {
+        return -1;
+      }
+      else {  // else most expensive augment first
+        return ns.singularity.getAugmentationPrice(b) - ns.singularity.getAugmentationPrice(a);
+      }
+    })
+
+    ns.tprint('consider adding', augmentsThisIteration[0]);
+
+    let augmentsConsiderBuying = [...augmentsToBuy, augmentsThisIteration[0]];
+    if (!hasMoneyForAugments(ns, augmentsConsiderBuying)) {
+      break;
+    }
+    else {
+      augmentsToBuy = [...augmentsConsiderBuying];
+      // cut off first augment so we do not consider it again
+      newAugmentsToConsider = newAugmentsToConsider.filter((n) => n !== augmentsThisIteration[0])
+    }
+  }
+  return augmentsToBuy;
+}
+
+export function hasAllPreReqs(ns: NS, augment: string, augmentsAvailable: string[]) {
+  return ns.singularity.getAugmentationPrereq(augment).every((preReq) => { return augmentsAvailable.some((ownedAugment) => ownedAugment === preReq) });
+}
+
+export function getAugmentsUnilUnique(ns: NS, faction: string) {
+  const ownedAugments = ns.singularity.getOwnedAugmentations(true);
+  // only care about rep gain
+  if (faction === ns.enums.FactionName.TianDiHui) {
+
+    let repGainAugments = ns.singularity.getAugmentationsFromFaction(ns.enums.FactionName.TianDiHui);
+    repGainAugments = repGainAugments.filter((augmentOfT) => (ns.singularity.getAugmentationStats(augmentOfT).faction_rep ?? 1) > 1);
+
+    // if there is unowned rep gain, then return all of them as these are needed early game
+    if (
+      repGainAugments.some((repGain) => !ownedAugments.includes(repGain)))
+      return repGainAugments;
+  }
+
+  if (faction === ns.enums.FactionName.CyberSec) {
+    return ['BitWire', 'Synaptic Enhancement Implant', 'Neurotrainer I']
+  }
+
+
+  const allAugments = ns.singularity.getAugmentationsFromFaction(faction);
+
+  const allUnownedAugments = allAugments.filter((augment) => ownedAugments.find((ownedAugment) => augment === ownedAugment) === undefined);
+  let maxUnique = undefined;
+  let maxUniqueRep = 0;
+
+  // do Nitesec in 2 parts
+  if (faction === ns.enums.FactionName.NiteSec && !ownedAugments.includes('Cranial Signal Processors - Gen I')) {
+    maxUniqueRep = ns.singularity.getAugmentationRepReq('Cranial Signal Processors - Gen I');
+    maxUnique = ('Cranial Signal Processors - Gen I');
+  }
+  else {
+    for (let augment of allUnownedAugments) {
+      if (isUniqueAugments(ns, augment) && (maxUnique === undefined || ns.singularity.getAugmentationRepReq(augment) > maxUniqueRep)) {
+        maxUnique = augment;
+        maxUniqueRep = ns.singularity.getAugmentationRepReq(augment);
+      }
+    }
+  }
+
+  let augmentsToBuy = allUnownedAugments;
+  if (maxUnique) {
+    augmentsToBuy = augmentsToBuy.filter((augment) => ns.singularity.getAugmentationRepReq(augment) <= maxUniqueRep);
+  }
+
+
+  return augmentsToBuy;
+}
+
+export function isUniqueAugments(ns: NS, augment: string) {
+  return ns.singularity.getAugmentationFactions(augment).length === 1
+}
+

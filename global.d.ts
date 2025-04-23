@@ -13,5 +13,5 @@ declare global {
   type NodeStats = Netscript.NodeStats;
   type SpawnOptions = Netscript.SpawnOptions;
 
-  type Globals = { activityType?: TaskType, factionToWorkFor: string, skip: boolean, trainHack: boolean, shareRam: boolean; reset: boolean; startGang: boolean }
+  type Globals = { activityType?: TaskType, factionToWorkFor: string, skip: boolean, trainHack: boolean, shareRam: boolean; reset: boolean; startGang: boolean; lastBatchMoneyGain: number }
 }

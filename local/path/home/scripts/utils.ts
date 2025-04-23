@@ -39,16 +39,18 @@ export function getServerToHack(ns: NS) {
     const server = ns.getServer(serverHostName);
     if (server.hasAdminRights) {
       if (ns.fileExists('Formulas.exe')) {
-
-        // calculate threads needed to hack to 10% money
-        const hackThreadsFull = Math.ceil(10 / ns.formulas.hacking.hackPercent(server, player));
+        server.moneyAvailable = server.moneyMax
+        // calculate threads needed to hack 10% money
+        let amountToHack = 0.1
+        const hackThreadsFull = Math.ceil(amountToHack / ns.formulas.hacking.hackPercent(server, player));
+        //ns.tprint(ns.formulas.hacking.hackPercent(server, player))
         const weaken1ThreadsFull = Math.ceil(0.002 * hackThreadsFull / 0.05);
 
         const serverAdjusted = server;
-        serverAdjusted.moneyAvailable = 0;
+        serverAdjusted.moneyAvailable = (1 - amountToHack) * (server.moneyMax ?? 0);
         const growThreadsFull = ns.formulas.hacking.growThreads(serverAdjusted, player, server.moneyMax ?? 0);
         const weaken2ThreadsFull = growThreadsFull * 0.004 / 0.05;
-
+        // ns.tprint({ hackThreadsFull, weaken1ThreadsFull, weaken2ThreadsFull, growThreadsFull })
         const ramForBatch = hackThreadsFull * costHack + (weaken1ThreadsFull + weaken2ThreadsFull) * costWeaken + growThreadsFull * costGrow;
         // calculate profit of running a full batch per time per ram
         server.moneyAvailable = server.moneyMax;
@@ -56,8 +58,10 @@ export function getServerToHack(ns: NS) {
         const batchLength = ns.formulas.hacking.weakenTime(server, player);
         const hackChance = ns.formulas.hacking.hackChance(server, player);
         const moneyPerTimePerRam = hackChance * (server.moneyMax ?? 0) / batchLength / ramForBatch;
+        let moneyMax = server.moneyMax;
+        //ns.tprint({ serverHostName, batchLength, hackChance, ramForBatch, moneyMax, moneyPerTimePerRam })
         // added sanity check to ignore server if the security level has been risen too high (likely because of an earlier mistake)
-        if (moneyPerTimePerRam > serverToHackMax && (ns.getHackTime(server.hostname) < (60 * 60 * 1000))) {
+        if (moneyPerTimePerRam > serverToHackMax && (ns.getHackTime(server.hostname) > 1000) && (ns.getHackTime(server.hostname) < (60 * 60 * 1000))) {
           serverToHackMax = moneyPerTimePerRam;
           serverToHack = server.hostname;
         }
@@ -277,4 +281,9 @@ export function getXpNeeded(ns: NS, level: number) {
   ns.tprint('xp to reach for ', level, ' : ', xpToReach);
   ns.tprint('current xp: ', currentXP);
   ns.tprint('0-1 there: ', currentXP / xpToReach);
+}
+
+
+export function formatNumber(ns: NS, n: number) {
+
 }

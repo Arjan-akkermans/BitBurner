@@ -1,6 +1,9 @@
 import { getAllServers } from './utils'
 import { getEarliestFactionWithUnique } from './workForFaction'
-
+import { getAugmentsUnilUnique, getRepCost } from './checkBuyAndInstallAugments';
+let ramFreeHome = 0;
+// first argument rep/favor target
+// second argument ram to keep free at home
 export async function main(ns: NS) {
 
 
@@ -12,7 +15,10 @@ export async function main(ns: NS) {
     ns.tprint('share all for ', faction, ' till rep: ', targetRep, ' favor: ', targetFavor);
     if (ns.args.length > 0) {
       targetRep = ns.args[0] as number;
-      targetFavor = ns.args[0] as number;
+      targetFavor = ns.args[1] as number;
+    }
+    if (ns.args.length > 2) {
+      ramFreeHome = ns.args[1] as number;
     }
     await shareRamUntill(ns, faction, targetRep, targetFavor);
 
@@ -38,7 +44,8 @@ export async function shareRamUntill(ns: NS, faction: string, targetRep?: number
         ns.killall(server);
       }
       ns.scp('scripts/share-ram-loop.ts', server);
-      const threads = Math.floor((ns.getServerMaxRam(server) - ns.getServerUsedRam(server)) / cost);
+      let ramToKeepFree = server === 'home' ? ramFreeHome : 0;
+      const threads = Math.floor((ns.getServerMaxRam(server) - ramToKeepFree - ns.getServerUsedRam(server)) / cost);
       if (threads === 0) {
         continue;
       }
@@ -59,11 +66,14 @@ export async function shareRamUntill(ns: NS, faction: string, targetRep?: number
 }
 
 
-export function getHighestAugmentRep(ns: NS, faction) {
+export function getHighestAugmentRep(ns: NS, faction: string) {
   let augments = ns.singularity.getAugmentationsFromFaction(faction);
   let ownedAugments = ns.singularity.getOwnedAugmentations(true);
   let highestRep = 0;
-
+  let augmentsUntillUnique = getAugmentsUnilUnique(ns, faction);
+  if (augmentsUntillUnique.length > 0) {
+    augments = augmentsUntillUnique
+  }
   for (let i = 0; i < augments.length; i++) {
     if (augments[i] !== 'NeuroFlux Governor' && ownedAugments.every((ownedAugment) => ownedAugment !== augments[i])) {
       highestRep = Math.max(highestRep, ns.singularity.getAugmentationRepReq(augments[i]));

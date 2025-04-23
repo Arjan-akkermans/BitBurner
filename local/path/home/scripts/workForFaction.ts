@@ -6,14 +6,16 @@ export async function main(ns: NS) {
   if (globals.factionToWorkFor.length > 0) {
     workHackingForFaction(ns, globals.factionToWorkFor)
   }
-  if (!ns.gang.inGang()) {
+  if (!ns.gang.inGang() && globals.startGang === true) {
     return; // return such that we keep homiciding
   }
 
-
+  if (ns.gang.inGang()) {
+    globals.activityType = 'FACTION';
+    ns.write(file, JSON.stringify(globals), 'w');
+  }
   // inGang hence no need to homicide anymore
-  globals.activityType = 'FACTION';
-  ns.write(file, JSON.stringify(globals), 'w');
+
   /*
   let hardcodedFaction = ns.enums.FactionName.CyberSec;
   if (ns.getPlayer().factions.includes(hardcodedFaction)) {
@@ -66,8 +68,27 @@ export async function main(ns: NS) {
 
 export function getEarliestFactionWithUnique(ns: NS) {
 
+  let factionsOfPlayer = ns.getPlayer().factions;
   const ownedAugmentations = ns.singularity.getOwnedAugmentations();
-  if (ownedAugmentations.length === 0) {
+  // get rep gain augments from TianDiHui
+  let augmentsOfT = ns.singularity.getAugmentationsFromFaction(ns.enums.FactionName.TianDiHui)
+  let repGainAugments = augmentsOfT.filter((augmentOfT) => (ns.singularity.getAugmentationStats(augmentOfT).faction_rep ?? 1) > 1);
+
+  // if there is an unowned rep gain, and not yet joing faction join it by traveling to it
+  if (
+    repGainAugments.some((repGain) => !ownedAugmentations.includes(repGain))
+    && !factionsOfPlayer.includes(ns.enums.FactionName.TianDiHui)) {
+    ns.singularity.travelToCity(ns.enums.CityName.Chongqing);
+    return ns.enums.FactionName.TianDiHui;
+  }
+  else if (
+    // joined TianDiHui, and there are unbought augments which boost rep gain -> work
+    repGainAugments.some((repGain) => !ownedAugmentations.includes(repGain))) {
+    return ns.enums.FactionName.TianDiHui
+  }
+
+  // only 2 rep boost and/or neuroflux, start with cybersec (has no unique)
+  if (!ownedAugmentations.includes('BitWire')) {
     return ns.enums.FactionName.CyberSec;
   }
   // for hacking augments

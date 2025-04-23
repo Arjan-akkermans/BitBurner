@@ -73,10 +73,13 @@ export async function main(ns: NS) {
   // if the argument is undefined then determine the server and write as output to port
   // if no argument is provided then determine itself
   let currentServerToHack = getServerToHack(ns);
+
   if (ns.args.length > 0) {
+
     currentServerToHack = ns.args[0] as string;
   }
   if (currentServerToHack === '') {
+
     currentServerToHack = getServerToHack(ns) as string;
   }
   let runOnce = false;
@@ -101,7 +104,7 @@ export async function main(ns: NS) {
       const freeRamForHome = 0;
       let serversObject = servers.map((server) => {
         let serverFull = ns.getServer(server);
-        return { hostName: server, availableRAM: ns.getServerMaxRam(server) - ns.getServerUsedRam(server) - (server === 'home' ? freeRamForHome : 0), cores: serverFull.cpuCores }
+        return { hostName: server, availableRAM: ns.getServerMaxRam(server) - ns.getServerUsedRam(server) - (server === 'home' ? freeRamForHome : 0), cpuCores: serverFull.cpuCores }
       })
       //ns.tprint( serversObject);
       moneyStolen = await updateBatches(ns, serversObject, currentServerToHack);
@@ -139,7 +142,7 @@ export async function main(ns: NS) {
 
 }
 
-export const updateBatches = async (ns: NS, servers: { hostName: string, availableRAM: number }[], serverToHack: string) => {
+export const updateBatches = async (ns: NS, servers: { hostName: string, availableRAM: number, cpuCores: number }[], serverToHack: string) => {
 
   let moneyHacked = 0;
   const costWeaken = ns.getScriptRam('scripts/weaken-single.ts');
@@ -213,7 +216,7 @@ export const updateBatches = async (ns: NS, servers: { hostName: string, availab
   }
 }
 
-export const createHWGWBatch = (ns: NS, servers: { hostName: string, availableRAM: number }[], serverToHack: string) => {
+export const createHWGWBatch = (ns: NS, servers: { hostName: string, availableRAM: number, cpuCores: number }[], serverToHack: string) => {
   // initialize with assigning a batch with hack threads enough to hack all funds
   // but if the last server (has most ram available) cannot fit that then we can start lower
   let moneyHacked = 0;
@@ -228,6 +231,8 @@ export const createHWGWBatch = (ns: NS, servers: { hostName: string, availableRA
   const costHack = ns.getScriptRam('scripts/hack-single.ts');
 
   let hackThreads = Math.min(hackThreadsFull, (Math.floor(servers[servers.length - 1].availableRAM / costHack)));
+  // use grow for home if it has more than 1 core (unless home is 'way' bigger than other servers)
+  let useGrowForHome = servers.length > 1 && ns.getServer('home').cpuCores > 1 && servers[servers.length - 1].availableRAM < 20 * servers[servers.length - 2].availableRAM;
   let count = 0;
   let moneyStolenSingle = ns.hackAnalyze(serverToHack) * ns.getServerMaxMoney(serverToHack);
   // get player object, and update throughout while loop to account for later batches!
@@ -259,7 +264,9 @@ export const createHWGWBatch = (ns: NS, servers: { hostName: string, availableRA
     // assign hack
     for (let i = 0; i < servers.length; i++) {
       let serverObject = servers[i];
-      if (serverObject.availableRAM >= costHack * hackThreads) {
+      if (serverObject.availableRAM >= costHack * hackThreads
+        && (!useGrowForHome || serverObject.hostName !== 'home')
+      ) {
         hackpid = ns.exec('scripts/hack-single.ts', serverObject.hostName, hackThreads, serverToHack, weakenTime - hackTime);
         serverObject.availableRAM -= costHack * hackThreads;
         hackHost = serverObject.hostName;
@@ -269,20 +276,22 @@ export const createHWGWBatch = (ns: NS, servers: { hostName: string, availableRA
     // assign weaken1
     for (let i = 0; i < servers.length; i++) {
       let serverObject = servers[i];
-      if (serverObject.availableRAM >= costWeaken * weaken1Threads) {
+      if (serverObject.availableRAM >= costWeaken * weaken1Threads
+        && (!useGrowForHome || serverObject.hostName !== 'home')) {
         weaken1pid = ns.exec('scripts/weaken-single.ts', serverObject.hostName, weaken1Threads, serverToHack, 0);
         serverObject.availableRAM -= costWeaken * weaken1Threads;
         weaken1Host = serverObject.hostName;
         break;
       }
     }
+    let serversSortedGrow = [...servers].sort((a, b) => b.cpuCores - a.cpuCores);
     // assign grow
     for (let i = 0; i < servers.length; i++) {
-      let serverObject = servers[i];
+      let serverObject = serversSortedGrow[i];
       growThreads = ns.formulas.hacking.growThreads(serverAdjusted, player, serverAdjusted.moneyMax ?? 0, 1);
       let growThreadsLocal = growThreads;
       if (ns.fileExists('Formulas.exe', 'home')) {
-        growThreadsLocal = ns.formulas.hacking.growThreads(serverAdjusted, player, serverAdjusted.moneyMax ?? 0, ns.getServer('home').cpuCores);
+        growThreadsLocal = ns.formulas.hacking.growThreads(serverAdjusted, player, serverAdjusted.moneyMax ?? 0, ns.getServer(serverObject.hostName).cpuCores);
       }
       if (serverObject.availableRAM >= costGrow * growThreadsLocal) {
         growpid = ns.exec('scripts/grow-single.ts', serverObject.hostName, growThreadsLocal, serverToHack, weakenTime - growTime);
@@ -296,7 +305,8 @@ export const createHWGWBatch = (ns: NS, servers: { hostName: string, availableRA
     // assign weaken2
     for (let i = 0; i < servers.length; i++) {
       let serverObject = servers[i];
-      if (serverObject.availableRAM >= costWeaken * weaken2Threads) {
+      if (serverObject.availableRAM >= costWeaken * weaken2Threads
+        && (!useGrowForHome || serverObject.hostName !== 'home')) {
         weaken2pid = ns.exec('scripts/weaken-single.ts', serverObject.hostName, weaken2Threads, serverToHack, 0);
         serverObject.availableRAM -= costWeaken * weaken2Threads;
         weaken2Host = serverObject.hostName;
@@ -351,6 +361,7 @@ export const createHWGWBatch = (ns: NS, servers: { hostName: string, availableRA
   else {
     return (activeBatches as BatchHWGW[]).reduce((count, batch) => count + batch.hackThreads * moneyStolenSingle, 0);
   }
+  return 0;
 }
 
 

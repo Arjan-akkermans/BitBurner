@@ -2,11 +2,11 @@ let file = 'data/globals.json';
 let globals = {} as Globals;
 export async function main(ns: NS) {
   globals = JSON.parse(ns.read(file))
-  globals.activityType = '';
+  globals.activityType = undefined;
   globals.factionToWorkFor = '';
   globals.trainHack = false;
   globals.shareRam = false; // should set this if hacking makes not so much money?
-  ns.write(file, JSON.stringify(globals), 'w')
+  ns.write('data/globals.json', JSON.stringify(globals), 'w');
 
   ns.run('scripts/hackn00dles.ts');
   const port = ns.getPortHandle(1);
@@ -45,11 +45,18 @@ export async function main(ns: NS) {
       }
       else {
         let pid = await run(ns, 'scripts/batch-manager-loop.ts', [hardCodedServer ? hardCodedServer : serverToHack, true, counter === 1])
-        let dataRead = ns.readPort(pid);
-        serverToHack = dataRead.serverToHack;
-        let moneyStolen = dataRead.moneyStolen;
-        if (serverToHack = 'NULL PORT DATA') {
-          serverToHack = '';
+        let dataRead = undefined;
+        if (pid) {
+          dataRead = ns.readPort(pid) as { serverToHack: string, moneyStolen: number };
+        }
+        if (dataRead) {
+          serverToHack = dataRead.serverToHack;
+          let moneyStolen = dataRead.moneyStolen;
+          globals.lastBatchMoneyGain = moneyStolen;
+          ns.write('data/globals.json', JSON.stringify(globals), 'w');
+          if (serverToHack = 'NULL PORT DATA') {
+            serverToHack = '';
+          }
         }
       }
     }
@@ -82,11 +89,8 @@ export async function main(ns: NS) {
     }
 
     // only work for faction if skills are somewhat trained and home has ram!
-    if ((ns.getServerMaxRam('home') >= 256)) {
-      await run(ns, 'scripts/checkBuyAndInstallAugments.ts')
-
-    }
-    ns.write(file, JSON.stringify(globals), 'w')
+    await run(ns, 'scripts/checkBuyAndInstallAugments.ts')
+    globals = JSON.parse(ns.read(file))
   }
 }
 
@@ -106,7 +110,7 @@ export async function run(ns: NS, scriptName: string, args?: ScriptArg[]) {
 
 
 export function resetGlobals(ns: NS) {
-  let globals = JSON.parse(ns.read(file)) as Globals;
+  let globals = JSON.parse(ns.read(file));
 
   globals.skip = false;
   globals.shareRam = false;
@@ -114,5 +118,5 @@ export function resetGlobals(ns: NS) {
   globals.trainHack = false;
   globals.reset = false;
   globals.factionToWorkFor = '';
-  ns.write(file, JSON.stringify(globals), 'w')
+  ns.write('data/globals.json', JSON.stringify(globals), 'w');
 }

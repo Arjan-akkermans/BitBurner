@@ -1,6 +1,7 @@
 import { infectServer } from './utils'
 import { getAllServers } from './utils'
 import { resetGlobals } from './autoPlay';
+import { resetStocks } from './stock';
 let file = 'data/globals.json';
 
 export async function main(ns: NS) {
@@ -18,8 +19,9 @@ export async function main(ns: NS) {
       ns.write('data/log.buyAugments.txt', (new Date().getTime) + ' ending bitnode / n', 'a')
 
       resetGlobals(ns);
+      resetStocks(ns);
       ns.write(file, JSON.stringify(globals), 'w');
-      ns.singularity.destroyW0r1dD43m0n(5, 'scripts/autoPlay.ts');
+      ns.singularity.destroyW0r1dD43m0n(12, 'scripts/autoPlay.ts');
     }
   }
 

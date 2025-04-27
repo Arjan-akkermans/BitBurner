@@ -21,7 +21,7 @@ export async function main(ns: NS) {
       resetGlobals(ns);
       resetStocks(ns);
       ns.write(file, JSON.stringify(globals), 'w');
-      ns.singularity.destroyW0r1dD43m0n(12, 'scripts/autoPlay.ts');
+      ns.singularity.destroyW0r1dD43m0n(8, 'scripts/autoPlay.ts');
     }
   }
 

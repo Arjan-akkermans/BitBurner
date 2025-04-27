@@ -207,8 +207,8 @@ export const updateBatches = async (ns: NS, servers: { hostName: string, availab
     moneyHacked = createHWGWBatch(ns, servers, serverToHack);
     //writeBatches(ns);
     // wait till last script is completed
-    let pidtoWaitOn = ((activeBatches[activeBatches.length - 1]) as BatchHWGW).weaken2pid;
-    while (ns.isRunning(pidtoWaitOn)) {
+    let pidtoWaitOn = ((activeBatches[activeBatches.length - 1]) as BatchHWGW)?.weaken2pid;
+    while (pidtoWaitOn && ns.isRunning(pidtoWaitOn)) {
       await ns.sleep(100);
     }
     checkServerState(ns, serverToHack, true);
@@ -462,9 +462,10 @@ export function writeServerState(ns: NS, serverToHack: string) {
 export function checkServerState(ns: NS, serverToHack: string, prompt?: boolean) {
 
   const server = ns.getServer(serverToHack);
-  if (server.moneyAvailable < server.moneyMax || server.hackDifficulty > server.minDifficulty) {
+  if (server.moneyAvailable && server.hackDifficulty && server.moneyMax && server.minDifficulty &&
+    (server.moneyAvailable < server.moneyMax || server.hackDifficulty > server.minDifficulty)) {
     if (prompt) {
-      ns.prompt('After a HWGW batch, the server was not in ideal state/n' + JSON.stringify({
+      ns.prompt('After a HWGW batch, the server was not in ideal state\n' + JSON.stringify({
         maxMoney: server.moneyMax,
         moneyAvailable: server.moneyAvailable,
         securityLevel: server.hackDifficulty,

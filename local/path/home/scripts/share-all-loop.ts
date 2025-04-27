@@ -12,14 +12,17 @@ export async function main(ns: NS) {
   if (faction) {
     let targetFavor = getFavorThreshold(ns, faction);
     let targetRep = getHighestAugmentRep(ns, faction);
-    ns.tprint('share all for ', faction, ' till rep: ', targetRep, ' favor: ', targetFavor);
+
     if (ns.args.length > 0) {
       targetRep = ns.args[0] as number;
+    }
+    if (ns.args.length > 1) {
       targetFavor = ns.args[1] as number;
     }
     if (ns.args.length > 2) {
       ramFreeHome = ns.args[1] as number;
     }
+    ns.tprint('share all for ', faction, ' till rep: ', targetRep, ' favor: ', targetFavor);
     await shareRamUntill(ns, faction, targetRep, targetFavor);
 
   }

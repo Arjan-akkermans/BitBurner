@@ -13,7 +13,6 @@ export async function main(ns: NS) {
 export const upgradeServers = (ns: NS) => {
 
   let moneySpend = 0;
-
   const purchaseServer = (id: string, ramSize: number) => {
     return ns.purchaseServer(id, ramSize);
   }
@@ -30,16 +29,16 @@ export const upgradeServers = (ns: NS) => {
     count++;
     currentRam = Math.min(currentRam * 2, ns.getPurchasedServerMaxRam());
   }
-
+  currentRam = Math.min(currentRam, ns.getPurchasedServerMaxRam());
 
   if (ns.args.length > 0) {
     currentRam = ns.args[0] as number
   }
   if (servers.length > 0) {
     currentRam = Math.max(...servers.map((server) => ns.getServerMaxRam(server)))
-  }
+  } 
 
-  if (currentRam === ns.getPurchasedServerMaxRam()) {
+  if (currentRam === ns.getPurchasedServerMaxRam() && servers.length === ns.getPurchasedServerLimit()) {
     finished = true;
   }
 

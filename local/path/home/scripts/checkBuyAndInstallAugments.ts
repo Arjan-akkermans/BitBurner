@@ -2,6 +2,7 @@ import { getEarliestFactionWithUnique } from './workForFaction'
 import { sortAugments } from './utils'
 import { getAllServers } from './utils'
 import { run } from './autoPlay'
+import { getHighestAugmentRep } from './share-all-loop';
 let file = 'data/globals.json';
 const neuroFluxGovernor = 'NeuroFlux Governor'
 export async function main(ns: NS) {
@@ -50,10 +51,10 @@ export async function main(ns: NS) {
     augmentsToBuy = sortAugments(ns, augmentsToBuy);
     let moneyCost = getAugmentsCost(ns, augmentsToBuy);
     let repCost = getRepCost(ns, augmentsToBuy);
+    // keep track of money and rep thresholds,
+    // only if close to both, then stop spending money on other things
+    let moneyThreshold = globals.lastBatchMoneyGain * 50 > moneyCost;
 
-    if (globals.lastBatchMoneyGain * 50 > moneyCost) {
-      globals.skip = true;
-    }
     let factionRep = ns.singularity.getFactionRep(factionName);
     if (ns.singularity.getFactionFavor(factionName) > ns.getFavorToDonate() && factionRep < repCost) {
       // if can donate, do it first before sharing ram
@@ -73,10 +74,17 @@ export async function main(ns: NS) {
       moneyCost *= 1.5;
     }
     if (ns.getServerMoneyAvailable('home') > moneyCost) {
-      globals.shareRam = true;
-      ns.tprint('running and waiting share all')
-      await run(ns, 'scripts/share-all-loop.ts', [repCost, ns.singularity.getFactionFavor(factionName) + 50]);
-      await buy(ns, factionName, augmentsToBuy);
+      // determine whether to buy or not is mainly done based on rep/favor
+      let decideDoBuyVar = decideDoBuy(ns, factionName, augmentsToBuy);
+      if (decideDoBuyVar >= 1) {
+        await buy(ns, factionName, augmentsToBuy);
+      }
+      else {
+        if (decideDoBuyVar > 0.85 && moneyThreshold) {
+          // if close to rep and money, then set skip to true
+          globals.skip = true;
+        }
+      }
     }
 
     ns.write(file, JSON.stringify(globals), 'w');
@@ -367,10 +375,9 @@ export function addToBuy(ns: NS, augments: string[]) {
   let counter = 0;
   while (newAugmentsToConsider.length > 0 && counter < 1000) {
     counter++;
-    ns.tprint(counter);
-    ns.tprint('newAugmentsToConsider', newAugmentsToConsider)
+
     let augmentsAvailable = ownedAugmentations.concat(augmentsToBuy);
-    ns.tprint('newAugments Available');
+
     let augmentsThisIteration = newAugmentsToConsider.filter((newAugment) => hasAllPreReqs(ns, newAugment, augmentsAvailable));
     if (augmentsThisIteration.length === 0) {
       break;
@@ -395,8 +402,6 @@ export function addToBuy(ns: NS, augments: string[]) {
         return ns.singularity.getAugmentationPrice(b) - ns.singularity.getAugmentationPrice(a);
       }
     })
-
-    ns.tprint('consider adding', augmentsThisIteration[0]);
 
     let augmentsConsiderBuying = [...augmentsToBuy, augmentsThisIteration[0]];
     if (!hasMoneyForAugments(ns, augmentsConsiderBuying)) {
@@ -467,3 +472,42 @@ export function isUniqueAugments(ns: NS, augment: string) {
   return ns.singularity.getAugmentationFactions(augment).length === 1
 }
 
+// buy and reset if either:
+// - there is enough rep to buy all augments
+// - when resetting there is enough favor to donate
+// - when resetting there is a 'significant' boost to the new rep gain
+
+// returns a >=1 if buying should be done
+// otherwise returns a number [0-1] indicating how close to resetting we are
+export function decideDoBuy(ns: NS, factionName: string, augments: string[]) {
+
+  const favorThreshold = 50;
+  // reset if enough rep to buy all augments
+  const repCost = getRepCost(ns, augments);
+  const currentRep = ns.singularity.getFactionRep(factionName);
+  const favorGain = ns.singularity.getFactionFavorGain(factionName);
+  const favor = ns.singularity.getFactionFavor(factionName);
+  const favorToDonate = ns.getFavorToDonate();
+  let hasRep = repCost <= currentRep;
+  if (hasRep) {
+    ns.tprint('returning 1 as rep is met');
+    return 1;
+  }
+  // reset if enough favor to donate
+  if (favor + favorGain >= favorToDonate) {
+    ns.tprint('retrning 1 as favor is met')
+    return 1;
+  }
+
+  // get favor untill either can donate or threshold
+  let favorToGain = Math.min(favorToDonate - favor, favorThreshold);
+  // if 'close' to donation, then set favor to gain to the amount needed to donate
+  if (favor + favorGain + 1 / 3 * favorThreshold >= favorToDonate) {
+    favorToGain = favorToDonate - favor;
+  }
+
+
+  const ratioToRepGoal = currentRep / repCost;
+  const ratioToFavorGoal = favorGain / favorToGain;
+  return Math.max(ratioToRepGoal, ratioToFavorGoal);
+}

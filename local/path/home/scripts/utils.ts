@@ -22,7 +22,12 @@ export function getAllServers(ns: NS) {
   return dfs(ns, ns.getServer('home'))
 }
 
+export function getAllPersonalServers(ns: NS) {
+  const allServers = [...dfs(ns, ns.getServer('home'))];
+  const personalServers = allServers.filter((server) => server.startsWith('pserv-'));
+  return personalServers;
 
+}
 // get server to hack
 export function getServerToHack(ns: NS) {
 
@@ -34,11 +39,16 @@ export function getServerToHack(ns: NS) {
   const costGrow = ns.getScriptRam('scripts/grow-single.ts');
   const costHack = ns.getScriptRam('scripts/hack-single.ts');
   const player = ns.getPlayer();
-
   allServers.forEach((serverHostName) => {
     const server = ns.getServer(serverHostName);
     if (server.hasAdminRights) {
       if (ns.fileExists('Formulas.exe')) {
+
+        // assuming we only do say 20 hacking iterations of the server
+        // we want to apply some penalty for the initial weaken time
+        // the initial weaken time will partly be added to the batch length time
+        const initialWeakenTime = ns.getWeakenTime(server.hostname);
+        const initialWeakenTimePenalty = 0.05;
         server.moneyAvailable = server.moneyMax
         // calculate threads needed to hack 10% money
         let amountToHack = 0.1
@@ -57,7 +67,9 @@ export function getServerToHack(ns: NS) {
         server.hackDifficulty = server.minDifficulty;
         const batchLength = ns.formulas.hacking.weakenTime(server, player);
         const hackChance = ns.formulas.hacking.hackChance(server, player);
-        const moneyPerTimePerRam = hackChance * (server.moneyMax ?? 0) / batchLength / ramForBatch;
+        let penaltyTime = (initialWeakenTime * initialWeakenTimePenalty)
+        //ns.tprint({ serverHostName, batchLength, penaltyTime, hackChance, ramForBatch })
+        const moneyPerTimePerRam = hackChance * (server.moneyMax ?? 0) / (batchLength + initialWeakenTime * initialWeakenTimePenalty) / ramForBatch;
         let moneyMax = server.moneyMax;
         //ns.tprint({ serverHostName, batchLength, hackChance, ramForBatch, moneyMax, moneyPerTimePerRam })
         // added sanity check to ignore server if the security level has been risen too high (likely because of an earlier mistake)

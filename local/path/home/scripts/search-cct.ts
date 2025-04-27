@@ -1112,11 +1112,11 @@ export function proper2ColeringOfAGraph(ns: NS, data: (number | number[][])[]) {
     // nodes added to unvisited are already correctly colored (the first on is colored by default as everything gets assigned the same starting color)
     let currentNode = 0;
     if (toVisit.size > 0) {
-      currentNode = toVisit.values().next().value;
+      currentNode = toVisit.values().next().value as number;
       toVisit.delete(currentNode);
     }
     else {
-      currentNode = unvisited.values().next().value;
+      currentNode = unvisited.values().next().value as number;
       unvisited.delete(currentNode);
     }
 
@@ -1173,7 +1173,7 @@ export function shortestPathInAGrid(ns: NS, data: number[][]) {
     let minPath = initialMaxPath;
     let currentNodeRow = 0;
     let currentNodeCol = 0;
-    let valueToDelete = unvisited.values().next().value;
+    let valueToDelete = unvisited.values().next().value as string;
     for (let value of unvisited) {
       let row = Number(value.split(',')[0])
       let col = Number(value.split(',')[1])

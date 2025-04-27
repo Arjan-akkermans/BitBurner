@@ -35,7 +35,7 @@ export async function main(ns: NS) {
     await run(ns, 'scripts/commitCrime.ts', ['Homicide']);
   }
   else {
-
+    globals.activityType = 'FACTION';
     ns.write(file, JSON.stringify(globals), 'w');
     /*
        limits = {

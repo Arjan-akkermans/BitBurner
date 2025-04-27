@@ -5,7 +5,6 @@ export async function main(ns: NS) {
   globals.activityType = undefined;
   globals.factionToWorkFor = '';
   globals.trainHack = false;
-  globals.shareRam = false; // should set this if hacking makes not so much money?
   ns.write('data/globals.json', JSON.stringify(globals), 'w');
 
   ns.run('scripts/hackn00dles.ts');
@@ -20,6 +19,8 @@ export async function main(ns: NS) {
   if (ns.args.length > 0) {
     hardCodedServer = ns.args[0] as string;
   }
+
+  await run(ns, 'scripts/stock.ts');
   while (true) {
     counter++;
     // as start activity train skills and then do crime!
@@ -33,32 +34,32 @@ export async function main(ns: NS) {
       await run(ns, 'scripts/manageGang.ts');
     }
     globals = JSON.parse(ns.read(file))
-    let shareRam = globals.shareRam;
+    let shareRam = globals.activityType === 'FACTION'
     if (shareRam) {
-      await run(ns, 'scripts/share-all-loop.ts');
+      await run(ns, 'scripts/share-part-ram.ts');
+    }
+
+    let trainHack = globals.trainHack;
+    if (trainHack) {
+      //TODO HARDODED LEVEL?
+      await run(ns, 'scripts/train-hack-loop.ts', [6000]);
     }
     else {
-      let trainHack = globals.trainHack;
-      if (trainHack) {
-        //TODO HARDODED LEVEL?
-        await run(ns, 'scripts/train-hack-loop.ts', [6000]);
+      let pid = await run(ns, 'scripts/batch-manager-loop.ts', [hardCodedServer ? hardCodedServer : serverToHack, true, counter === 1])
+      let dataRead = undefined;
+      if (pid) {
+        dataRead = ns.readPort(pid) as { serverToHack: string, moneyStolen: number };
       }
-      else {
-        let pid = await run(ns, 'scripts/batch-manager-loop.ts', [hardCodedServer ? hardCodedServer : serverToHack, true, counter === 1])
-        let dataRead = undefined;
-        if (pid) {
-          dataRead = ns.readPort(pid) as { serverToHack: string, moneyStolen: number };
-        }
-        if (dataRead) {
-          serverToHack = dataRead.serverToHack;
-          let moneyStolen = dataRead.moneyStolen;
-          globals.lastBatchMoneyGain = moneyStolen;
-          ns.write('data/globals.json', JSON.stringify(globals), 'w');
-          if (serverToHack = 'NULL PORT DATA') {
-            serverToHack = '';
-          }
+      if (dataRead) {
+        serverToHack = dataRead.serverToHack;
+        let moneyStolen = dataRead.moneyStolen;
+        globals.lastBatchMoneyGain = moneyStolen;
+        ns.write('data/globals.json', JSON.stringify(globals), 'w');
+        if (serverToHack = 'NULL PORT DATA') {
+          serverToHack = '';
         }
       }
+
     }
 
     if (ns.getServerMaxRam('home') <= 256) {

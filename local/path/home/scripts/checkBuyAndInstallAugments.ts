@@ -32,29 +32,40 @@ export async function main(ns: NS) {
     }
   }
 
-  /*
-    let x = getFactionToBuyGreedy(ns);
-    let factionName = x.factionToBuyFrom;
-    let augments = x.augmentsToBuy;
-  
-    if (!!factionName) {
-      await buy(ns, factionName, augments);
-      return
-    }*/
 
   let augments = [] as string[]
   let factionName = getEarliestFactionWithUnique(ns);
 
+  let currentTime = new Date().getTime();
+
+  // if already 1 hour without restart, start saving some cash and then install
+  // just here to ensure some progress is made
+  if (currentTime - ns.getResetInfo().lastAugReset > 1000 * 60 * 60) {
+
+    globals.skip = true;
+  }
+
+  // add case here such that we reset after 1.5 hours???
+  if (currentTime - ns.getResetInfo().lastAugReset > 1000 * 60 * 60 * 1.5
+    && getAugmentsCost(ns, [neuroFluxGovernor]) <= ns.getServerMoneyAvailable('home')) {
+    await buy(ns, factionName ?? ns.enums.FactionName.SlumSnakes, []);
+  }
+  // ONLY BUY IF CAN DONATE OR BUY AT LEAST 1 AUGMENT? 
 
   if (!!factionName) {
     let augmentsToBuy = getAugmentsUnilUnique(ns, factionName);
+
     augmentsToBuy = sortAugments(ns, augmentsToBuy);
     let moneyCost = getAugmentsCost(ns, augmentsToBuy);
     let repCost = getRepCost(ns, augmentsToBuy);
+    // if crime got enough money, then we can do it again, probably something wrong with other money gain methods
+    if (ns.getMoneySources().sinceInstall.crime > moneyCost) {
+      globals.skip = true;
+    }
+
     // keep track of money and rep thresholds,
     // only if close to both, then stop spending money on other things
-    let moneyThreshold = globals.lastBatchMoneyGain * 50 > moneyCost;
-
+    let moneyThreshold = globals.lastBatchMoneyGain * 50 > moneyCost || (ns.getServerMoneyAvailable('home') > moneyCost * 1.5);
     let factionRep = ns.singularity.getFactionRep(factionName);
     if (ns.singularity.getFactionFavor(factionName) > ns.getFavorToDonate() && factionRep < repCost) {
       // if can donate, do it first before sharing ram
@@ -68,13 +79,13 @@ export async function main(ns: NS) {
       }
 
     }
-
     // mostly intended for early game, if neuroFlux is not limited by rep, then get some more money such that a few stacks can be bought
     if (ns.singularity.getAugmentationRepReq(neuroFluxGovernor) < repCost) {
       moneyCost *= 1.5;
     }
     if (ns.getServerMoneyAvailable('home') > moneyCost) {
       // determine whether to buy or not is mainly done based on rep/favor
+
       let decideDoBuyVar = decideDoBuy(ns, factionName, augmentsToBuy);
       if (decideDoBuyVar >= 1) {
         await buy(ns, factionName, augmentsToBuy);
@@ -83,6 +94,10 @@ export async function main(ns: NS) {
         if (decideDoBuyVar > 0.85 && moneyThreshold) {
           // if close to rep and money, then set skip to true
           globals.skip = true;
+        } else {
+          // not really sure if this point is ever reached,
+          // but money is reached but rep is not, so just set work to faction just in cases
+          globals.activityType = 'FACTION';
         }
       }
     }
@@ -161,6 +176,7 @@ export async function main(ns: NS) {
 
 export async function buy(ns: NS, factionName: string, augments: string[]) {
   let success = true;
+
   await run(ns, 'scripts/sellStocks.ts');
   augments = addToBuy(ns, augments);
   augments = sortAugments(ns, augments);
@@ -273,14 +289,21 @@ export function getFactionToBuy(ns: NS, augment: string) {
   return faction;
 }
 
+// Returns total augments cost assuming:
+// No augments are bought yet
+// takes into account source file 11 (discount on augment increase)
 export function getAugmentsCost(ns: NS, augments: string[]) {
   let moneyRequired = 0;
 
+  let sourceFiles = ns.singularity.getOwnedSourceFiles();
+  let sourceFile11 = sourceFiles.find((sourceFile) => sourceFile.n === 1);
+  let index = sourceFile11?.lvl ?? 0;
+
+  let power = [1, 0.96, 0.94, 0.93][index];
   // check price on sorted set, sorting ensures reqs are in correct order and sorts based on price
   let augmentsSorted = sortAugments(ns, augments);
   for (let i = 0; i < augmentsSorted.length; i++) { // 2 instead of 1.9 as also some more money is desired
-
-    moneyRequired += ns.singularity.getAugmentationBasePrice(augmentsSorted[i]) * Math.pow(2, i);
+    moneyRequired += ns.singularity.getAugmentationBasePrice(augmentsSorted[i]) * Math.pow(power, i);
   }
 
   return moneyRequired;
@@ -324,24 +347,37 @@ export async function buyAugmentsFromGang(ns: NS) {
 
   // filter by rep
   let augmentsFiltered = augmentsOfGang.filter((augment) => ns.singularity.getAugmentationRepReq(augment) <= ns.singularity.getFactionRep(factionName))
-
   // filter by owned
   augmentsFiltered = augmentsFiltered.filter((augment) => { return ownedAugments.every((ownedAugment) => { return ownedAugment !== augment }) });
-
+  let amountUnOwned = augmentsFiltered.length;
   // filter by dependencies, keep it simple just filter on all prereqs owned
   augmentsFiltered = augmentsFiltered.filter((augment) => { return ns.singularity.getAugmentationPrereq(augment).every((preReq) => { return ownedAugments.some((ownedAugment) => ownedAugment === preReq) }) })
+  // fiter by money
+  augmentsFiltered = augmentsFiltered.filter((augment) => { return ns.singularity.getAugmentationBasePrice(augment) <= ns.getServerMoneyAvailable('home') });
 
+  if (augmentsFiltered.length === 0) {
+    return false;
+  }
   // only buy augments if at least this many are available to be bought!
-  let i = 5;
-  if (augmentsFiltered.length >= i && false) {
+  let i = Math.min(augmentsFiltered.length, 5);
+  // Case to ensure that if the minimum is not available the remaining augments will still be bought
+  i = Math.min(i, amountUnOwned);
+  let allAugmentsRemainingLength = augmentsFiltered.length;
+  if (augmentsFiltered.length >= i) {
 
     let augmentsToBuy = augmentsFiltered.slice(0, i);
     if (hasMoneyForAugments(ns, augmentsToBuy)) {
-      while (hasMoneyForAugments(ns, augmentsToBuy) && i < 1000) {
-        i++
+      while (hasMoneyForAugments(ns, augmentsToBuy) && i < 1000 && i < augmentsFiltered.length) {
 
         augmentsToBuy.push(augmentsFiltered[i])
+        // TODO this is ugly way to cover the case where all augments can be bought
+        if (augmentsToBuy.length === allAugmentsRemainingLength && hasMoneyForAugments(ns, augmentsToBuy)) {
+          await buy(ns, factionName, augmentsToBuy);
+          return true;
+        }
+        i++
       }
+
       augmentsToBuy = augmentsToBuy.slice(0, i - 1);
       await buy(ns, factionName, augmentsToBuy);
       return true;
@@ -388,6 +424,9 @@ export function addToBuy(ns: NS, augments: string[]) {
 
       if (statsB.hacking > statsA.hacking) {
         return -1
+      }
+      else if (statsB.crime_money > statsA.crime_money) {
+        return -1;
       }
       else if (statsB.hacking_speed > statsA.hacking_speed) {
         return -1
@@ -436,6 +475,13 @@ export function getAugmentsUnilUnique(ns: NS, faction: string) {
 
   if (faction === ns.enums.FactionName.CyberSec) {
     return ['BitWire', 'Synaptic Enhancement Implant', 'Neurotrainer I']
+  }
+
+  // slum snakes is done for crime money, hence return crime money augments
+  if (faction === ns.enums.FactionName.SlumSnakes) {
+    let augmentsSlumSnakes = ns.singularity.getAugmentationsFromFaction(ns.enums.FactionName.SlumSnakes);
+    let crimeMoneyAugments = augmentsSlumSnakes.filter((augment) => ns.singularity.getAugmentationStats(augment).crime_money > 1);
+    return crimeMoneyAugments;
   }
 
 

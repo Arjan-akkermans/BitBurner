@@ -7,22 +7,28 @@ type GangData = {
     PreviousTask: string;
     PreviousTaskStart: number;
     StartTrainingSinceAscend: number;
-  }[]
+  }[],
+  CurrentTick: number,
+  clashTickFound: boolean,
+  previousPower: number,
+  previousTerritory: number
 };
 let data = {} as GangData;
 let currentTime = new Date().getTime();
-let minWinChanceThreshold = 0.6
-
+let minWinChanceThreshold = 0.95 // when to assign to warfare
+let minWinChangeStartWarfare = 0.6
+const ticksForWarfare = 10; //TODO this is normally 10 ( 10 cycles per update, 100 cycles for warfare), but can change with bonus time
 export async function main(ns: NS) {
   data = JSON.parse((ns.read(file) === '') ? '{}' : ns.read(file)) as GangData;
+  initData(ns);
+  // call above created members, this is just for type inference
   if (data.Members === undefined) {
-    data.Members = [];
+    return;
   }
-
   if (!getCreateInGang(ns)) {
+    await waitAndRestart(ns);
     return
   }
-
   let counter = 0;
   while (ns.gang.canRecruitMember() && counter < 100) {
     counter++
@@ -32,8 +38,7 @@ export async function main(ns: NS) {
   let members = ns.gang.getMemberNames();
   // TODO  cleanupData(ns);
 
-
-
+  let gangInformation = ns.gang.getGangInformation();
   let respectTillNextMember = ns.gang.respectForNextRecruit();
   for (const member of members) {
     // add member to data 
@@ -51,6 +56,9 @@ export async function main(ns: NS) {
     // ensure member trains for at least 5 minutes since last ascencion
     const i = data.Members?.findIndex((memberData) => memberData.Name === member) ?? -1;
     if (i !== -1) {
+      if (data.CurrentTick === 1 && data.clashTickFound) {
+        ns.gang.setMemberTask(member, data.Members[i].PreviousTask);
+      }
       if (data.Members[i].PreviousTask === 'Train Combat'
         && (currentTime - data.Members[i].StartTrainingSinceAscend) < 1000 * 60 * 5
       ) {
@@ -64,31 +72,102 @@ export async function main(ns: NS) {
         trainMember(ns, memberInformation);
         continue;
       }
-
-      let minRep = respectTillNextMember / 100000;
+      // after reset immidiately make some money to speed up initial grinding
+      if (new Date().getTime() - ns.getResetInfo().lastAugReset < 1000 * 60) {
+        getMoney(ns, memberInformation, 0);
+        continue
+      }
+      let minRep = respectTillNextMember / 100000
       // drop wanted first as it decreases all other activities
-      if (!dropWanted(ns, memberInformation))
+      if (!dropWanted(ns, memberInformation)) {
         // get respect if it is 'soon' to a new member can be recruited
         if (!getRespect(ns, memberInformation, minRep)) {
           // otherwise get money (if specific value can be gotten???)
-          if (!assignTerritory(ns, memberInformation)) {
-            let thresholdMoneyGain = 100//(currentTime - data.Members[i].PreviousTaskStart) * 10000;
-            // threshold based on previous task start, such that we eventually switch
+
+          let timeSinceLastTask = (currentTime - data.Members[i].PreviousTaskStart);
+          if (data.Members[i].PreviousTask === 'Train Combat') {
+            if (timeSinceLastTask > 1000 * 60 * 5) {
+              // there is no need to get anymore respect if discount is already a high factor
+              // logic above already assigns respect if thats needed to drop wanted penalty
+              if (getDiscount(ns) < 10000 && Math.random() >= 0.5) {
+                getRespect(ns, memberInformation, 0);
+              }
+              else {
+                getMoney(ns, memberInformation, 0)
+              }
+
+            }
+          }
+          else {
+            if (timeSinceLastTask > 1000 * 60 * 5 || ns.gang.getMemberInformation(member).task === 'Unassigned') {
+              trainMember(ns, memberInformation);
+            }
+          }
+          /*  // threshold based on previous task start, such that we eventually switch
             if (!getMoney(ns, memberInformation, thresholdMoneyGain)) { // getMoneyOrRespect??? this should at least be switched occasionally?
               if (!getRespect(ns, memberInformation, thresholdMoneyGain / 10)) {
                 trainMember(ns, memberInformation);
               }
-            }
-          }
+            }*/
         }
+      }
     }
   }
   buyEquipment(ns, members);
+  // if at the warfare tick, assign all members, next tick will unassign again
+  assignWarfareOnTick(ns, members);
 
-  ns.gang.setTerritoryWarfare(getMinWinChance(ns) >= minWinChanceThreshold)
-
+  ns.gang.setTerritoryWarfare(getMinWinChance(ns) >= minWinChangeStartWarfare)
+  updateCycleInformation(ns);
   ns.write(file, JSON.stringify(data), 'w');
+
+  await waitAndRestart(ns);
 }
+
+export function initData(ns: NS) {
+  if (data.Members === undefined) {
+    data.Members = [];
+  }
+  if (data.CurrentTick === undefined) {
+    data.CurrentTick = 0;
+  }
+  if (data.clashTickFound === undefined) {
+    data.clashTickFound = false;
+  }
+}
+
+export function updateCycleInformation(ns: NS) {
+
+  let gangInformation = ns.gang.getGangInformation();
+  let power = gangInformation.power;
+  let territory = gangInformation.territory;
+
+  if ((data.previousPower !== undefined && data.previousPower !== power
+    || data.previousTerritory !== undefined && data.previousTerritory !== territory
+  ) && ns.gang.getBonusTime() === 0) {
+    data.clashTickFound = true;
+    data.CurrentTick = 0;
+  }
+  data.previousPower = power;
+  data.previousTerritory = territory;
+  data.CurrentTick++;
+  if (data.CurrentTick > ticksForWarfare) {
+    data.CurrentTick = 1;
+  }
+}
+
+export async function waitAndRestart(ns: NS) {
+  updateHUD(ns);
+  if (ns.gang.inGang()) {
+    await ns.gang.nextUpdate();
+  }
+  else {
+    await ns.sleep(10000);
+  }
+  ns.spawn('scripts/manageGang.ts', { spawnDelay: 0 })
+}
+
+
 export function trainMember(ns: NS, member: GangMemberInfo) {
   // ascend member if conditions are met
   ascendMember(ns, member);
@@ -139,7 +218,8 @@ export function dropWanted(ns: NS, member: GangMemberInfo) {
 
   const gangInformation = ns.gang.getGangInformation();
   // if wanted is low just get some respect, it also lowers wanted and has more benefits
-  if (gangInformation.wantedLevel < 100 && gangInformation.wantedPenalty > 0.10) {
+  // wanted penalty is a multiplier, i.e. 1 means no penalty
+  if (gangInformation.wantedLevel < 100 && gangInformation.wantedPenalty < 0.90) {
     getRespect(ns, member, 1);
   }
 
@@ -151,9 +231,21 @@ export function dropWanted(ns: NS, member: GangMemberInfo) {
   else return false;
 }
 
+export function assignWarfareOnTick(ns: NS, members: string[]) {
+  // tick is only updated at the end
+  if (data.CurrentTick !== ticksForWarfare - 1) {
+    return;
+  }
+  for (let member of members) {
+    assignTerritory(ns, ns.gang.getMemberInformation(member));
+  }
+}
+
 export function assignTerritory(ns: NS, member: GangMemberInfo) {
 
-  if (getMinWinChance(ns) <= minWinChanceThreshold) { return assignTask(ns, member.name, 'Territory Warfare') }
+  // call directly the ns.gang method so that other stats, i.e. previous task etc are not updated
+  // TODO improve? currently thats a bit hacky
+  if (getMinWinChance(ns) < minWinChanceThreshold) { return ns.gang.setMemberTask(member.name, 'Territory Warfare') }
   else {
     return false;
   }
@@ -181,8 +273,11 @@ export function ascendMember(ns: NS, member: GangMemberInfo) {
     return false;
   }
 
-  if (Math.min(ascendedMember.agi, ascendedMember.def, ascendedMember.dex, ascendedMember.str) >= 1.1) {
+  if (Math.min(ascendedMember.agi, ascendedMember.def, ascendedMember.dex, ascendedMember.str) >= 1.15) {
     ns.gang.ascendMember(member.name);
+    if (!data.Members) {
+      return
+    }
     const i = data.Members?.findIndex((memberData) => memberData.Name === member.name) ?? -1;
     if (i !== -1) {
       data.Members[i].StartTrainingSinceAscend = currentTime;
@@ -210,14 +305,17 @@ export function buyEquipment(ns: NS, members: string[]) {
 export function buyEquipmentForMemberLimited(ns: NS, member: string, limit: number) {
   const equipmentNames = ns.gang.getEquipmentNames();
   for (let i = 0; i < equipmentNames.length; i++) {
-    if (['Weapon', 'Augmentation', 'Armor', 'Vehicle'].includes(ns.gang.getEquipmentType(equipmentNames[i]))
+    if ((['Weapon', 'Augmentation', 'Armor', 'Vehicle'].includes(ns.gang.getEquipmentType(equipmentNames[i]))
       && ns.gang.getEquipmentCost(equipmentNames[i]) <= limit
       && (ns.gang.getEquipmentStats(equipmentNames[i]).str
         || ns.gang.getEquipmentStats(equipmentNames[i]).def
         || ns.gang.getEquipmentStats(equipmentNames[i]).dex
-        || ns.gang.getEquipmentStats(equipmentNames[i]).agi)) {
+        || ns.gang.getEquipmentStats(equipmentNames[i]).agi))
+      // extra condtion to buy other aguments if 'really cheap', hacking still has some benefit for combat gangs
+      || ns.gang.getEquipmentCost(equipmentNames[i]) < 0.0001 * limit) {
       ns.gang.purchaseEquipment(member, equipmentNames[i])
     }
+
   }
 }
 
@@ -240,13 +338,30 @@ export function getCreateInGang(ns: NS) {
 
 }
 
+// returns the discount for equipment, the cost of equipment is divided by this value
+export function getDiscount(ns: NS) {
+  // from source code Gang.ts
+  let gangInformation = ns.gang.getGangInformation();
+  let respect = gangInformation.respect;
+  let power = gangInformation.power;
+  const respectLinearFac = 5e6;
+  const powerLinearFac = 1e6;
+  const discount =
+    Math.pow(respect, 0.01) + respect / respectLinearFac + Math.pow(power, 0.01) + power / powerLinearFac - 1;
+  return Math.max(1, discount);
+}
+
 export function getStrongestMember(ns: NS) {
   let members = ns.gang.getMemberNames().sort((a, b) => (ns.gang.getMemberInformation(a).str - ns.gang.getMemberInformation(b).str));
   return members[members.length - 1];
 }
 
 export function assignTask(ns: NS, member: string, task: string) {
-  const i = data.Members?.findIndex((memberData) => memberData.Name === member) ?? -1;
+  if (!data.Members) {
+    return
+  }
+
+  const i = data.Members.findIndex((memberData) => memberData.Name === member) ?? -1;
   if (i !== -1) {
     if (data.Members[i].PreviousTask !== task) {
       data.Members[i].PreviousTaskStart = currentTime;
@@ -268,9 +383,40 @@ export function recruitMember(ns: NS) {
 
 }
 
+export function resetGangData(ns: NS) {
+  let fileToWrite = 'data/manageGang.json';;
+  ns.write(fileToWrite, JSON.stringify({}), 'w');
+}
+
 
 export function cleanUpData(ns: NS) {
   let members = ns.gang.getMemberNames();
 
-  data.Members = data.Members.filter(member => members.includes(member.Name));
+
+  //data.Members = data.Members.filter(member => members.includes(member.Name));
+}
+
+
+
+
+export function updateHUD(ns: NS) {
+  let doc = eval('document');
+  let hook0 = doc.getElementById('overview-extra-hook-0');
+  let hook1 = doc.getElementById('overview-extra-hook-1');
+
+  let hook2 = doc.getElementById('overview-extra-hook-2');
+
+  let headers = [];
+  let values = [];
+
+  headers.push('Tick');
+  headers.push('FoundClash');
+  headers.push('Karma');
+
+  values.push(data.CurrentTick);
+  values.push(data.clashTickFound);
+  values.push(ns.getPlayer().karma);
+
+  hook0.innerText = headers.join(' \n');
+  hook1.innerText = values.join(' \n');
 }

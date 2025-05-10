@@ -49,31 +49,17 @@ export function getServerToHack(ns: NS) {
         // the initial weaken time will partly be added to the batch length time
         const initialWeakenTime = ns.getWeakenTime(server.hostname);
         const initialWeakenTimePenalty = 0.05;
+        // this is here because currently my implementation blocks other scripts, hence a long initial time is quite bad.
+        const hardLimitWeakenDuration = 5 * 60 * 1000;
         server.moneyAvailable = server.moneyMax
-        // calculate threads needed to hack 10% money
-        let amountToHack = 0.1
-        const hackThreadsFull = Math.ceil(amountToHack / ns.formulas.hacking.hackPercent(server, player));
-        //ns.tprint(ns.formulas.hacking.hackPercent(server, player))
-        const weaken1ThreadsFull = Math.ceil(0.002 * hackThreadsFull / 0.05);
-
-        const serverAdjusted = server;
-        serverAdjusted.moneyAvailable = (1 - amountToHack) * (server.moneyMax ?? 0);
-        const growThreadsFull = ns.formulas.hacking.growThreads(serverAdjusted, player, server.moneyMax ?? 0);
-        const weaken2ThreadsFull = growThreadsFull * 0.004 / 0.05;
-        // ns.tprint({ hackThreadsFull, weaken1ThreadsFull, weaken2ThreadsFull, growThreadsFull })
-        const ramForBatch = hackThreadsFull * costHack + (weaken1ThreadsFull + weaken2ThreadsFull) * costWeaken + growThreadsFull * costGrow;
-        // calculate profit of running a full batch per time per ram
-        server.moneyAvailable = server.moneyMax;
-        server.hackDifficulty = server.minDifficulty;
+        let threads = getHGWThreads(ns, server, 1, player);
         const batchLength = ns.formulas.hacking.weakenTime(server, player);
-        const hackChance = ns.formulas.hacking.hackChance(server, player);
         let penaltyTime = (initialWeakenTime * initialWeakenTimePenalty)
         //ns.tprint({ serverHostName, batchLength, penaltyTime, hackChance, ramForBatch })
-        const moneyPerTimePerRam = hackChance * (server.moneyMax ?? 0) / (batchLength + initialWeakenTime * initialWeakenTimePenalty) / ramForBatch;
-        let moneyMax = server.moneyMax;
+        const moneyPerTimePerRam = threads.bestMoneyPerRam / (batchLength + penaltyTime);
         //ns.tprint({ serverHostName, batchLength, hackChance, ramForBatch, moneyMax, moneyPerTimePerRam })
         // added sanity check to ignore server if the security level has been risen too high (likely because of an earlier mistake)
-        if (moneyPerTimePerRam > serverToHackMax && (ns.getHackTime(server.hostname) > 1000) && (ns.getHackTime(server.hostname) < (60 * 60 * 1000))) {
+        if (initialWeakenTime < hardLimitWeakenDuration && moneyPerTimePerRam > serverToHackMax && (ns.getHackTime(server.hostname) > 1000) && (ns.getHackTime(server.hostname) < (60 * 60 * 1000))) {
           serverToHackMax = moneyPerTimePerRam;
           serverToHack = server.hostname;
         }
@@ -96,6 +82,69 @@ export function getServerToHack(ns: NS) {
   )
   return serverToHack ?? 'n00dles';
 }
+
+export function getHGWThreads(ns: NS, server: Server, cores: number, player: Person) {
+  // returns the optimal HGW threads for a batch, assuming current player stats, and optimal serverState, using cores for the growth
+  const costWeaken = ns.getScriptRam('scripts/weaken-single.ts');
+  const costGrow = ns.getScriptRam('scripts/grow-single.ts');
+  const costHack = ns.getScriptRam('scripts/hack-single.ts');
+  let hackThreads = 0;
+  let growThreads = 0;
+  let weakenThreads = 0;
+  let bestMoneyPerRam = 0;
+  let stolenPerHack = ns.formulas.hacking.hackPercent(server, player);
+  let maxHackThreads = Math.floor(1 / stolenPerHack);
+  if (!server.moneyAvailable || !server.moneyMax || !server.hackDifficulty || !server.minDifficulty || stolenPerHack === 0) {
+    return { hackThreads, growThreads, weakenThreads, bestMoneyPerRam }
+  }
+
+  for (let i = 1; i <= maxHackThreads; i++) {
+
+    // weaken lowers by 0.05
+    // hack/grow increases by 0.002
+    let hackT = i;
+    let threads = getHGWThreadsFromHackThread(ns, server, cores, hackT, player);
+
+    let moneyGained: number = stolenPerHack * threads.hackThreads * server.moneyAvailable;
+    let moneyPerRam = moneyGained / (threads.hackThreads * costHack + threads.growThreads * costGrow + threads.weakenThreads * costWeaken);
+    if (moneyPerRam > bestMoneyPerRam) {
+      bestMoneyPerRam = moneyPerRam;
+      hackThreads = threads.hackThreads;
+      growThreads = threads.growThreads;
+      weakenThreads = threads.weakenThreads;
+    }
+  }
+
+  return { hackThreads, growThreads, weakenThreads, bestMoneyPerRam }
+}
+
+export function getHGWThreadsFromHackThread(ns: NS, server: Server, cores: number, hackThreads: number, player: Person) {
+
+  // weaken lowers by 0.05
+  // hack/grow increases by 0.002
+  hackThreads;
+  let growThreads = 0;
+  let weakenThreads = 0;
+  server.moneyAvailable = server.moneyMax;
+  server.hackDifficulty = server.minDifficulty;
+  let stolenPerHack = ns.formulas.hacking.hackPercent(server, player);
+  if (!server.moneyMax || !server.moneyAvailable || !server.hackDifficulty || !server.minDifficulty || stolenPerHack === 0) {
+    return { hackThreads, growThreads, weakenThreads }
+  }
+
+  let moneyGained: number = stolenPerHack * hackThreads * server.moneyAvailable;
+  server.hackDifficulty = server.hackDifficulty + hackThreads * 0.002
+  server.moneyAvailable = server.moneyAvailable - moneyGained;
+  growThreads = ns.formulas.hacking.growThreads(server, player, server.moneyMax, cores);
+  server.hackDifficulty = server.hackDifficulty + growThreads * 0.004;
+  weakenThreads = Math.ceil(server.hackDifficulty - server.minDifficulty) / 0.05;
+
+  server.moneyAvailable = server.moneyMax;
+  server.hackDifficulty = server.minDifficulty;
+
+  return { hackThreads, growThreads, weakenThreads }
+}
+
 
 
 // https://en.wikipedia.org/wiki/Dijkstra%27s_algorithm
@@ -202,7 +251,8 @@ export function infectServer(ns: NS, server: Server) {
     if (ns.fileExists('SQLInject.exe', 'home')) {
       ns.sqlinject(hostname);
     }
-    if ((server.numOpenPortsRequired ?? 0) <= (server.openPortCount ?? 0)) {
+    // get server because the steps above might have opened enough ports
+    if ((ns.getServer(hostname).openPortCount ?? 0) >= (server.numOpenPortsRequired ?? 0)) {
       ns.tprint('hacking server ', server.hostname)
       ns.nuke(hostname);
       return true
@@ -222,7 +272,6 @@ export function getSkip(ns: NS) {
 // source chat gpt
 export function sortAugments(ns: NS, augments: string[]) {
   // Define the function to perform topological sorting
-
   function topologicalSort(strings: string[], prerequisites: { name: string, dependencies: string[] }[]): string[] {
     // Step 1: Create a map of the dependencies for each string
     const graph: { [key: string]: string[] } = {};
@@ -274,7 +323,7 @@ export function sortAugments(ns: NS, augments: string[]) {
   augments = augments.sort((a, b) => ns.singularity.getAugmentationBasePrice(b) - ns.singularity.getAugmentationBasePrice(a))
 
   // only account for dependencies also in the set to purchase and if not already owned
-  let dependencies = augments.map(augment => {
+  let dependencies = augments.map((augment) => {
     let allDependencies = ns.singularity.getAugmentationPrereq(augment);
     let dependenciesLocal = allDependencies.filter((dependency) => !ns.singularity.getOwnedAugmentations().includes(dependency)
       && augments.includes(dependency));

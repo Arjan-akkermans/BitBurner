@@ -1,4 +1,4 @@
-import { getServerToHack, getAllServers } from './utils'
+import { getServerToHack, getAllServers, getHGWThreads, getHGWThreadsFromHackThread } from './utils'
 let file = 'data/globals.json';
 let globals = {} as Globals;
 interface Batch {
@@ -26,6 +26,12 @@ interface BatchHW extends Omit<BatchW, 'type'> {
   hackHost: string;
   hackThreads: number;
 }
+interface BatchHGW extends Omit<BatchHW, 'type'> {
+  type: 'HGW',
+  growpid: number;
+  growHost: string;
+  growThreads: number;
+}
 interface BatchHWGW extends Omit<BatchGW, 'type'> {
   type: 'HWGW',
   hackpid: number,
@@ -42,31 +48,43 @@ function isBatchW(batch: BatchW | BatchGW | BatchHWGW): batch is BatchW {
 function isBatchGW(batch: BatchW | BatchGW | BatchHWGW): batch is BatchGW {
   return batch.type === 'GW'
 }
+function isBatchHWG(batch: BatchW | BatchGW | BatchHGW | BatchHWGW): batch is BatchHGW {
+  return batch.type === 'HGW'
+}
 function isBatchHWGW(batch: BatchW | BatchGW | BatchHWGW): batch is BatchHWGW {
   return batch.type === 'HWGW'
 }
 
+
+
+
 /*
 * contains sorted list of batches, sorted by end time ascendingly
 */
-let activeBatches = [] as (BatchW | BatchGW | BatchHWGW)[];
+let activeBatches = [] as (BatchW | BatchGW | BatchHGW | BatchHWGW)[];
 
 /*
 * @param serverToHack? optional parameter if included will hack that target
 * @param runOnce? optional parameter to only run 1 iteration
 * @param doWarmup optional to run the scripts once on n00dles
+* @param isLong optional boolean or undefined to indicate whether the hack is done based on a long (true) or short (false) stock
 */
 
+
+
+// TODO properly schedule Weaken and grow and then start with batching,
+// currently if server is not ideal we spend a full iteration doing only preperation
 export async function main(ns: NS) {
-
-
-  if (ns.hasRootAccess('n00dles') && ns.args.length < 2 || (ns.args[2] as boolean)) {
+  if (ns.hasRootAccess('n00dles') && (ns.args.length < 2 || (ns.args[2] as boolean))) {
     // run all scripts once to compile them (ensures proper sequencing)
     ns.exec('scripts/grow-single.ts', 'home', 1, 'n00dles');
     ns.exec('scripts/hack-single.ts', 'home', 1, 'n00dles');
     ns.exec('scripts/weaken-single.ts', 'home', 1, 'n00dles');
   }
-
+  let isLong = undefined;
+  if (ns.args.length > 3) {
+    isLong = ns.args[3] as boolean;
+  }
   let moneyStolen = 0;
   let moneyBeforeContinue = ns.getServerMoneyAvailable('home');
   // if argument is provided for serer to hack, use it
@@ -82,6 +100,7 @@ export async function main(ns: NS) {
 
     currentServerToHack = getServerToHack(ns) as string;
   }
+
   let runOnce = false;
   if (ns.args.length > 1) {
     runOnce = ns.args[1] as boolean;
@@ -89,7 +108,9 @@ export async function main(ns: NS) {
   let keepGoing = true;
   while (true && keepGoing) {
     activeBatches = [];
+
     if (ns.hasRootAccess(currentServerToHack)) {
+
       let servers = [...getAllServers(ns)];
       // sort servers in ascending order only those with root access
       servers = servers.filter((server) => ns.hasRootAccess(server) && !server.startsWith('hacknet'));
@@ -107,7 +128,8 @@ export async function main(ns: NS) {
         return { hostName: server, availableRAM: ns.getServerMaxRam(server) - ns.getServerUsedRam(server) - (server === 'home' ? freeRamForHome : 0), cpuCores: serverFull.cpuCores }
       })
       //ns.tprint( serversObject);
-      moneyStolen = await updateBatches(ns, serversObject, currentServerToHack);
+
+      moneyStolen = await updateBatches(ns, serversObject, currentServerToHack, isLong);
       // add a small sleep, otherwise ram is not always freed
       writeServerState(ns, currentServerToHack)
     }
@@ -142,7 +164,7 @@ export async function main(ns: NS) {
 
 }
 
-export const updateBatches = async (ns: NS, servers: { hostName: string, availableRAM: number, cpuCores: number }[], serverToHack: string) => {
+export const updateBatches = async (ns: NS, servers: { hostName: string, availableRAM: number, cpuCores: number }[], serverToHack: string, isLong: boolean | undefined) => {
 
   let moneyHacked = 0;
   const costWeaken = ns.getScriptRam('scripts/weaken-single.ts');
@@ -195,7 +217,7 @@ export const updateBatches = async (ns: NS, servers: { hostName: string, availab
       }
       // as both threads are limited to 1 minimum, verify that there is ram
       if (growThreads * costWeaken + weakenThreads * costGrow <= ramAvailable)
-        ns.exec('scripts/grow-single.ts', server.hostName, growThreads, serverToHack, weakenTime - growTime)
+        ns.exec('scripts/grow-single.ts', server.hostName, growThreads, serverToHack, weakenTime - growTime, isLong ?? false)
       ns.exec('scripts/weaken-single.ts', server.hostName, weakenThreads, serverToHack, 0);
     }
     await ns.sleep(weakenTime);
@@ -204,11 +226,13 @@ export const updateBatches = async (ns: NS, servers: { hostName: string, availab
 
   else {
     // server is in ideal state (lowest security highest money)
-    moneyHacked = createHWGWBatch(ns, servers, serverToHack);
+    moneyHacked = createHGWBatch(ns, servers, serverToHack, isLong);
+
     //writeBatches(ns);
     // wait till last script is completed
-    let pidtoWaitOn = ((activeBatches[activeBatches.length - 1]) as BatchHWGW)?.weaken2pid;
+    let pidtoWaitOn = ((activeBatches[activeBatches.length - 1]) as BatchHGW)?.weaken1pid;
     while (pidtoWaitOn && ns.isRunning(pidtoWaitOn)) {
+      updateHUD(ns, moneyHacked);
       await ns.sleep(100);
     }
     checkServerState(ns, serverToHack, true);
@@ -216,7 +240,166 @@ export const updateBatches = async (ns: NS, servers: { hostName: string, availab
   }
 }
 
-export const createHWGWBatch = (ns: NS, servers: { hostName: string, availableRAM: number, cpuCores: number }[], serverToHack: string) => {
+
+export const createHGWBatch = (ns: NS, servers: { hostName: string, availableRAM: number, cpuCores: number }[], serverToHack: string, isLong: boolean | undefined) => {
+  // initialize with assigning a batch with hack threads enough to hack all funds
+  // but if the last server (has most ram available) cannot fit that then we can start lower
+  let player = ns.getPlayer();
+  let server = ns.getServer(serverToHack);
+  let moneyStolenSingle = ns.hackAnalyze(serverToHack) * ns.getServerMaxMoney(serverToHack);
+  let xpFromThread = ns.formulas.hacking.hackExp(server, player);
+  const weakenTime = ns.getWeakenTime(serverToHack);
+  const hackTime = ns.getHackTime(serverToHack);
+  const growTime = ns.getGrowTime(serverToHack);
+
+  const costWeaken = ns.getScriptRam('scripts/weaken-single.ts');
+  const costGrow = ns.getScriptRam('scripts/grow-single.ts');
+  const costHack = ns.getScriptRam('scripts/hack-single.ts');
+
+  let count = 0;
+  // get player object, and update throughout while loop to account for later batches!
+
+  let maxLoop = 100000
+  // sort ascending number of cores
+  servers.sort((a, b) => a.cpuCores - b.cpuCores);
+  // start with most optimal, then decrease (expected if no space to fit batch)
+  let maxCores = servers[servers.length - 1].cpuCores;
+  let threads = getHGWThreads(ns, server, maxCores, player);
+  let hackThreads = threads.hackThreads;
+  let recalculateThreads = false;
+  // keep per core (for grow) the optimal number of threads available
+  // this will start off with the optimal number of hack threads, given that max cpu cores are available
+  // then hackingThreads will be lowered (assuming that is only needed if there is not sufficient RAM)
+  // note its not totally optimal, as different cores might lead to different optimal threads, but this should be relatively close to optimal
+  let threadsPerCore = new Map<number, {
+    hackThreads: number;
+    growThreads: number;
+    weakenThreads: number;
+  }>;
+
+  while (hackThreads >= 1 && count < maxLoop) {
+    count++;
+    if (recalculateThreads) {
+      for (let i = 1; i <= maxCores; i++) {
+        threadsPerCore.set(i, getHGWThreadsFromHackThread(ns, ns.getServer(serverToHack), i, hackThreads, player))
+      }
+      recalculateThreads = false;
+    }
+    let hackpid = undefined as number | undefined
+    let weakenpid = undefined as number | undefined
+    let growpid = undefined as number | undefined
+    let hackHost = undefined as string | undefined
+    let weakenHost = undefined as string | undefined
+    let growHost = undefined as string | undefined
+    let growThreadsLoop = 0;
+    let hackThreadsLoop = 0;
+    let weakenThreadsLoop = 0;
+    let growCores = 0;
+    // servers start in ascending order of available ram, always try assigning from begin
+
+    // try assign all 3 actions
+    // assign grow
+    // start from end i.e. server with most cores
+    for (let i = servers.length - 1; i >= 0; i--) {
+      let serverObject = servers[i];
+      let growThreadsLocal = threadsPerCore.get(serverObject.cpuCores)?.growThreads as number;
+      if (serverObject.availableRAM >= costGrow * growThreadsLocal) {
+        serverObject.availableRAM -= costGrow * growThreadsLocal;
+        growHost = serverObject.hostName;
+        growThreadsLoop = growThreadsLocal;
+        growCores = serverObject.cpuCores;
+        break;
+      }
+    }
+    // assign hack
+    for (let i = 0; i < servers.length; i++) {
+      let serverObject = servers[i];
+      let hackThreadsLocal = threadsPerCore.get(growCores)?.hackThreads as number;
+      if (serverObject.availableRAM >= costHack * hackThreadsLocal
+      ) {
+        serverObject.availableRAM -= costHack * hackThreadsLocal;
+        hackHost = serverObject.hostName;
+        hackThreadsLoop = hackThreadsLocal;
+        break;
+      }
+    }
+    // assign hack
+    for (let i = 0; i < servers.length; i++) {
+      let serverObject = servers[i];
+      let weakenThreadsLocal = threadsPerCore.get(growCores)?.weakenThreads as number;
+      if (serverObject.availableRAM >= costWeaken * weakenThreadsLocal
+      ) {
+        serverObject.availableRAM -= costWeaken * weakenThreadsLocal;
+        weakenHost = serverObject.hostName;
+        weakenThreadsLoop = weakenThreadsLocal;
+        break;
+      }
+    }
+
+    // if batch is scheduled, store it, increase XP and go to next
+    // ideally, xp gained should also be accounted for within a batch TODO
+    if (hackHost && growHost && weakenHost) {
+      hackpid = ns.exec('scripts/hack-single.ts', hackHost, hackThreadsLoop, serverToHack, weakenTime - hackTime, !isLong);
+      growpid = ns.exec('scripts/grow-single.ts', growHost, growThreadsLoop, serverToHack, weakenTime - growTime, isLong ?? false);
+      weakenpid = ns.exec('scripts/weaken-single.ts', weakenHost, weakenThreadsLoop, serverToHack, 0);
+      let xpGained = xpFromThread * (hackThreadsLoop + growThreadsLoop + weakenThreadsLoop);
+      let hackingBefore = player.skills.hacking;
+      player.exp.hacking += xpGained;
+      player.skills.hacking = ns.formulas.skills.calculateSkill(player.exp.hacking, player.mults.hacking);
+      if (hackingBefore < player.skills.hacking) {
+        // recalculate thread distribution after skill will change!
+        recalculateThreads = true;
+      }
+      // push succesfully scheduled batch to array, and try assignment again (with same threads)
+      const start = new Date().getTime();
+      const end = start + weakenTime
+      const type = 'HGW';
+      // batch is always scheduled as last!
+      activeBatches.push({
+        start, end, type, weaken1pid: weakenpid, weaken1Host: weakenHost, growpid, growHost, hackpid, hackHost, weaken1Threads: weakenThreadsLoop, growThreads: growThreadsLoop, hackThreads: hackThreadsLoop, serverToHack
+      })
+    }
+    else {
+      // if batch could not be scheduled (must be because of no RAM)
+      // reset changes done in loop (= modified available ram)
+      // and reduce hackThreads by 1 and try again
+      let s = servers.find((server) => server.hostName === hackHost); if (s) { s.availableRAM += hackThreadsLoop * costHack }
+      s = servers.find((server) => server.hostName === weakenHost); if (s) { s.availableRAM += weakenThreadsLoop * costWeaken }
+      s = servers.find((server) => server.hostName === growHost); if (s) { s.availableRAM += growThreadsLoop * costGrow }
+      hackThreads -= 1;
+      // flag to indicate that hack threads is changed, and hence new threads ratio has to be calculated
+      recalculateThreads = true;
+    }
+  }
+  if (count === maxLoop) {
+    ns.tprint('ended batch assignment loop because of count being ', count, 'this likely indicates something went wrong')
+  }
+  /*
+  ns.tprint(hackThreads);
+  for (let i = 1; i <= maxCores; i++) {
+    ns.tprint(threadsPerCore.get(i));
+  }*/
+  // server is in ideal state but there is not enough ram to make a full batch
+  // that could happend because of a huge amount of grow threads needed
+  // in that case just hack it, and the next iteration of this loop will grow again.
+  // this is expected to only be needed very early game when there is not a lot of ram available!
+  if (activeBatches.length === 0) {
+    ns.tprint('could not schedule HWGW batches, proceeding with scheduling HW batches');
+    for (let i = 0; i < servers.length; i++) {
+      createHWBatch(ns, servers[i].hostName, serverToHack);
+    }
+  }
+  else {
+    return (activeBatches as BatchHWGW[]).reduce((count, batch) => count + batch.hackThreads * moneyStolenSingle, 0);
+  }
+  return 0;
+}
+
+
+export const createHWGWBatch = (ns: NS, servers: { hostName: string, availableRAM: number, cpuCores: number }[], serverToHack: string, isLong: boolean | undefined) => {
+  // OUTDATED, CURRENNTLY USING createHWGBatch instead!
+
+
   // initialize with assigning a batch with hack threads enough to hack all funds
   // but if the last server (has most ram available) cannot fit that then we can start lower
   let moneyHacked = 0;
@@ -241,6 +424,7 @@ export const createHWGWBatch = (ns: NS, servers: { hostName: string, availableRA
   let maxLoop = 100000
   while (hackThreads > 1 && count < maxLoop) {
     count++;
+    let xpFromThread = ns.formulas.hacking.hackExp(server, player);
     const moneyStolen = moneyStolenSingle * hackThreads;
     let weaken1Threads = Math.max(Math.ceil(hackThreads * 0.002 / 0.05), 1);
     let growThreads = hackThreads * 8; //?? cant use growthanalyze because it returns 0 if full money
@@ -267,9 +451,13 @@ export const createHWGWBatch = (ns: NS, servers: { hostName: string, availableRA
       if (serverObject.availableRAM >= costHack * hackThreads
         && (!useGrowForHome || serverObject.hostName !== 'home')
       ) {
-        hackpid = ns.exec('scripts/hack-single.ts', serverObject.hostName, hackThreads, serverToHack, weakenTime - hackTime);
+        hackpid = ns.exec('scripts/hack-single.ts', serverObject.hostName, hackThreads, serverToHack, weakenTime - hackTime, !isLong);
         serverObject.availableRAM -= costHack * hackThreads;
         hackHost = serverObject.hostName;
+
+        let xpGained = xpFromThread * hackThreads;
+        player.exp.hacking += xpGained;
+        player.skills.hacking = ns.formulas.skills.calculateSkill(player.exp.hacking, player.mults.hacking);
         break;
       }
     }
@@ -281,6 +469,9 @@ export const createHWGWBatch = (ns: NS, servers: { hostName: string, availableRA
         weaken1pid = ns.exec('scripts/weaken-single.ts', serverObject.hostName, weaken1Threads, serverToHack, 0);
         serverObject.availableRAM -= costWeaken * weaken1Threads;
         weaken1Host = serverObject.hostName;
+        let xpGained = xpFromThread * weaken1Threads;
+        player.exp.hacking += xpGained;
+        player.skills.hacking = ns.formulas.skills.calculateSkill(player.exp.hacking, player.mults.hacking);
         break;
       }
     }
@@ -294,10 +485,13 @@ export const createHWGWBatch = (ns: NS, servers: { hostName: string, availableRA
         growThreadsLocal = ns.formulas.hacking.growThreads(serverAdjusted, player, serverAdjusted.moneyMax ?? 0, ns.getServer(serverObject.hostName).cpuCores);
       }
       if (serverObject.availableRAM >= costGrow * growThreadsLocal) {
-        growpid = ns.exec('scripts/grow-single.ts', serverObject.hostName, growThreadsLocal, serverToHack, weakenTime - growTime);
+        growpid = ns.exec('scripts/grow-single.ts', serverObject.hostName, growThreadsLocal, serverToHack, weakenTime - growTime, isLong ?? false);
         serverObject.availableRAM -= costGrow * growThreadsLocal;
         growHost = serverObject.hostName;
         growThreads = growThreadsLocal;
+        let xpGained = xpFromThread * growThreads;
+        player.exp.hacking += xpGained;
+        player.skills.hacking = ns.formulas.skills.calculateSkill(player.exp.hacking, player.mults.hacking);
         break;
       }
     }
@@ -310,6 +504,9 @@ export const createHWGWBatch = (ns: NS, servers: { hostName: string, availableRA
         weaken2pid = ns.exec('scripts/weaken-single.ts', serverObject.hostName, weaken2Threads, serverToHack, 0);
         serverObject.availableRAM -= costWeaken * weaken2Threads;
         weaken2Host = serverObject.hostName;
+        let xpGained = xpFromThread * weaken2Threads + growThreads;
+        player.exp.hacking += xpGained;
+        player.skills.hacking = ns.formulas.skills.calculateSkill(player.exp.hacking, player.mults.hacking);
         break;
       }
     }
@@ -320,12 +517,28 @@ export const createHWGWBatch = (ns: NS, servers: { hostName: string, availableRA
       }
       // if any script could not be scheduled kill all that are scheduled
       if (hackpid) {
-        ns.kill(hackpid); const s = servers.find((server) => server.hostName === hackHost); if (s) { s.availableRAM += hackThreads * costHack }
+        ns.kill(hackpid);
+        player.exp.hacking -= hackThreads * xpFromThread;
+
+        const s = servers.find((server) => server.hostName === hackHost); if (s) { s.availableRAM += hackThreads * costHack }
       }
-      if (weaken1pid) { ns.kill(weaken1pid); const s = servers.find((server) => server.hostName === weaken1Host); if (s) { s.availableRAM += weaken1Threads * costWeaken } }
-      if (growpid) { ns.kill(growpid); const s = servers.find((server) => server.hostName === growHost); if (s) { s.availableRAM += growThreads * costGrow } }
-      if (weaken2pid) { ns.kill(weaken2pid); const s = servers.find((server) => server.hostName === weaken2Host); if (s) { s.availableRAM += weaken2Threads * costWeaken } }
+      if (weaken1pid) {
+        ns.kill(weaken1pid);
+        player.exp.hacking -= weaken1Threads * xpFromThread;
+        const s = servers.find((server) => server.hostName === weaken1Host); if (s) { s.availableRAM += weaken1Threads * costWeaken }
+      }
+      if (growpid) {
+        ns.kill(growpid);
+        player.exp.hacking -= growThreads * xpFromThread;
+        const s = servers.find((server) => server.hostName === growHost); if (s) { s.availableRAM += growThreads * costGrow }
+      }
+      if (weaken2pid) {
+        ns.kill(weaken2pid);
+        player.exp.hacking -= weaken2Threads * xpFromThread;
+        const s = servers.find((server) => server.hostName === weaken2Host); if (s) { s.availableRAM += weaken2Threads * costWeaken }
+      }
       // decrease hack threads and try again
+      player.skills.hacking = ns.formulas.skills.calculateSkill(player.exp.hacking, player.mults.hacking)
       hackThreads = Math.floor(hackThreads / 2);
     } else {
       // push succesfully scheduled batch to array, and try assignment again (with same threads)
@@ -337,10 +550,7 @@ export const createHWGWBatch = (ns: NS, servers: { hostName: string, availableRA
         start, end, type, weaken1pid, weaken1Host, weaken2Host, weaken2pid, growpid, growHost, hackpid, hackHost, weaken1Threads, weaken2Threads, growThreads, hackThreads, serverToHack
       })
       if (ns.fileExists('Formulas.exe', 'home')) {
-        let xpFromThread = ns.formulas.hacking.hackExp(server, player)
-        let xpGainedFromBatch = xpFromThread * (hackThreads + weaken1Threads + weaken2Threads + growThreads);
-        player.exp.hacking += xpGainedFromBatch;
-        player.skills.hacking = ns.formulas.skills.calculateSkill(player.exp.hacking, player.mults.hacking);
+
       }
     }
 
@@ -465,7 +675,7 @@ export function checkServerState(ns: NS, serverToHack: string, prompt?: boolean)
   if (server.moneyAvailable && server.hackDifficulty && server.moneyMax && server.minDifficulty &&
     (server.moneyAvailable < server.moneyMax || server.hackDifficulty > server.minDifficulty)) {
     if (prompt) {
-      ns.prompt('After a HWGW batch, the server was not in ideal state\n' + JSON.stringify({
+      ns.prompt('After a full batch, the server was not in ideal state\n' + JSON.stringify({
         maxMoney: server.moneyMax,
         moneyAvailable: server.moneyAvailable,
         securityLevel: server.hackDifficulty,
@@ -477,6 +687,35 @@ export function checkServerState(ns: NS, serverToHack: string, prompt?: boolean)
   return true;
 }
 
+export function updateHUD(ns: NS, expectedGain: number) {
+  let doc = eval('document');
+  let hook0 = doc.getElementById('overview-extra-hook-0');
+  let hook1 = doc.getElementById('overview-extra-hook-1');
+
+  let hook2 = doc.getElementById('overview-extra-hook-2');
+
+  let headers = [];
+  let values = [];
+
+  headers.push('Hacking server');
+  headers.push('Duration');
+  headers.push('Gain on completion');
+  headers.push('Remaining')
+
+  if (activeBatches.length > 0) {
+    values.push(activeBatches[0].serverToHack);
+    let durationSeconds = Math.round((activeBatches[0].end - activeBatches[0].start) / 1000);
+    values.push(`${ns.formatNumber(durationSeconds, 0)} s`);
+    values.push(ns.formatNumber(expectedGain));
+    let remaningSeconds = Math.round((activeBatches[0].end - new Date().getTime()) / 1000);
+    values.push(`${ns.formatNumber(remaningSeconds, 0)} s`)
+  }
+  else {
+    values.push(''); values.push(''); values.push(''); values.push('');
+  }
+  hook0.innerText = headers.join(' \n');
+  hook1.innerText = values.join(' \n');
+}
 
 
 

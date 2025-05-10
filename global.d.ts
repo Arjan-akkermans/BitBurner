@@ -6,6 +6,7 @@ declare global {
   type NS = Netscript.NS
   type ScriptArg = Netscript.ScriptArg
   type Server = Netscript.Server;
+  type Person = Netscript.Person;
   type GangMemberInfo = Netscript.GangMemberInfo;
   type CrimeType = Netscript.CrimeType;
   type TaskType = Netscript.Task["type"] | undefined;

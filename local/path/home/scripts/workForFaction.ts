@@ -1,10 +1,15 @@
 let file = 'data/globals.json';
+
+import { acceptFactionInvitations } from './acceptFactionInvitation'
+
 export async function main(ns: NS) {
   const ownedAugmentations = ns.singularity.getOwnedAugmentations();
   let globals = JSON.parse(ns.read(file)) as Globals
 
   if (globals.factionToWorkFor.length > 0) {
+    acceptFactionInvitations(ns); // TODO REMOVE?
     workHackingForFaction(ns, globals.factionToWorkFor)
+    return;
   }
   if (!ns.gang.inGang() && globals.startGang === true) {
     return; // return such that we keep homiciding
@@ -86,6 +91,11 @@ export function getEarliestFactionWithUnique(ns: NS) {
     repGainAugments.some((repGain) => !ownedAugmentations.includes(repGain))) {
     return ns.enums.FactionName.TianDiHui
   }
+  else if (ns.getBitNodeMultipliers().CrimeMoney >= 2) {
+    if (!ownedAugmentations.includes('SmartSonar Implant')) {
+      return ns.enums.FactionName.SlumSnakes;
+    }
+  }
 
   // only 2 rep boost and/or neuroflux, start with cybersec (has no unique)
   if (!ownedAugmentations.includes('BitWire')) {
@@ -122,7 +132,13 @@ export function getEarliestFactionWithUnique(ns: NS) {
 export function workHackingForFaction(ns: NS, factionName: string) {
   const task = ns.singularity.getCurrentWork();
   if (!task || task.type !== "FACTION" || task.factionName !== factionName || task.factionWorkType !== ns.enums.FactionWorkType.hacking) {
-    return ns.singularity.workForFaction(factionName, ns.enums.FactionWorkType.hacking, false)
+    // TODO REFACTOR
+    if (factionName === ns.enums.FactionName.SlumSnakes) {
+      return ns.singularity.workForFaction(factionName, ns.enums.FactionWorkType.security, false)
+    }
+    else {
+      return ns.singularity.workForFaction(factionName, ns.enums.FactionWorkType.hacking, false)
+    }
   }
   else {
     // already working for the faction

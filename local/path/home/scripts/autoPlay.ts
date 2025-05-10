@@ -20,7 +20,11 @@ export async function main(ns: NS) {
     hardCodedServer = ns.args[0] as string;
   }
 
-  await run(ns, 'scripts/stock.ts');
+  //await run(ns, 'scripts/stock.ts');
+  if (globals.startGang) {
+    const gangScript = 'scripts/manageGang.ts';
+    if (!ns.isRunning(gangScript)) { ns.run(gangScript); }
+  }
   while (true) {
     counter++;
     // as start activity train skills and then do crime!
@@ -30,9 +34,7 @@ export async function main(ns: NS) {
       await run(ns, 'scripts/spendHashes.ts')
       await run(ns, 'scripts/search-cct.ts')
     }
-    if (globals.startGang) {
-      await run(ns, 'scripts/manageGang.ts');
-    }
+
     globals = JSON.parse(ns.read(file))
     let shareRam = globals.activityType === 'FACTION'
     if (shareRam) {
@@ -46,6 +48,7 @@ export async function main(ns: NS) {
     }
     else {
       let pid = await run(ns, 'scripts/batch-manager-loop.ts', [hardCodedServer ? hardCodedServer : serverToHack, true, counter === 1])
+      globals = JSON.parse(ns.read(file))
       let dataRead = undefined;
       if (pid) {
         dataRead = ns.readPort(pid) as { serverToHack: string, moneyStolen: number };

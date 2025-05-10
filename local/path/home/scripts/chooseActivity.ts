@@ -16,7 +16,7 @@ export async function main(ns: NS) {
     agility: 20
   }
   // early game mug
-  if (globals.lastBatchMoneyGain < 1000000) {
+  if (globals.lastBatchMoneyGain < 10000000) {
     await trainUntill(ns, limits);
     return
   }
@@ -61,7 +61,6 @@ export async function main(ns: NS) {
 export async function trainUntill(ns: NS, limits: { strength: number, defence: number, dexterity: number, agility: number }) {
 
   let player = ns.getPlayer();
-
   if (player.skills.strength < limits.strength) {
 
     await run(ns, 'scripts/trainSkill.ts', ['str'])
@@ -83,8 +82,21 @@ export async function trainUntill(ns: NS, limits: { strength: number, defence: n
     globals.activityType = 'CLASS';
   }
   else {
-    await run(ns, 'scripts/commitCrime.ts', ['Mug'])
+
+    const crimes = [ns.enums.CrimeType.assassination, ns.enums.CrimeType.bondForgery, ns.enums.CrimeType.dealDrugs, ns.enums.CrimeType.grandTheftAuto, ns.enums.CrimeType.heist, ns.enums.CrimeType.homicide, ns.enums.CrimeType.kidnap, ns.enums.CrimeType.larceny, ns.enums.CrimeType.mug, ns.enums.CrimeType.robStore, ns.enums.CrimeType.shoplift, ns.enums.CrimeType.traffickArms]
+    let bestCrime = crimes[0];
+    for (let i = 1; i < crimes.length; i++) {
+      if (ns.formulas.work.crimeSuccessChance(player, crimes[i]) >= 0.5 && getCrimeMoneyPerTime(ns, player, crimes[i]) > getCrimeMoneyPerTime(ns, player, bestCrime)) {
+        bestCrime = crimes[i];
+      }
+    }
+    await run(ns, 'scripts/commitCrime.ts', [bestCrime])
     globals.activityType = 'CRIME';
   }
   ns.write(file, JSON.stringify(globals), 'w');
+}
+
+export function getCrimeMoneyPerTime(ns: NS, player: Person, crime: CrimeType) {
+  let value = ns.formulas.work.crimeGains(player, crime).money * ns.formulas.work.crimeSuccessChance(player, crime) / ns.singularity.getCrimeStats(crime).time;
+  return value;
 }

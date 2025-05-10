@@ -36,7 +36,7 @@ export const upgradeServers = (ns: NS) => {
   }
   if (servers.length > 0) {
     currentRam = Math.max(...servers.map((server) => ns.getServerMaxRam(server)))
-  } 
+  }
 
   if (currentRam === ns.getPurchasedServerMaxRam() && servers.length === ns.getPurchasedServerLimit()) {
     finished = true;

@@ -122,7 +122,8 @@ export async function main(ns: NS) {
         ns.scp('scripts/hack-single.ts', server);
         ns.scp('scripts/weaken-single.ts', server);
       }
-      const freeRamForHome = 0;
+      ns.tprint('keeping 100 free ram on home!')
+      const freeRamForHome = 100;
       let serversObject = servers.map((server) => {
         let serverFull = ns.getServer(server);
         return { hostName: server, availableRAM: ns.getServerMaxRam(server) - ns.getServerUsedRam(server) - (server === 'home' ? freeRamForHome : 0), cpuCores: serverFull.cpuCores }
@@ -226,13 +227,19 @@ export const updateBatches = async (ns: NS, servers: { hostName: string, availab
 
   else {
     // server is in ideal state (lowest security highest money)
-    moneyHacked = createHGWBatch(ns, servers, serverToHack, isLong);
+    moneyHacked = await createHGWBatch(ns, servers, serverToHack, isLong);
 
     //writeBatches(ns);
     // wait till last script is completed
     let pidtoWaitOn = ((activeBatches[activeBatches.length - 1]) as BatchHGW)?.weaken1pid;
+    let counterUpdateHud = 0
     while (pidtoWaitOn && ns.isRunning(pidtoWaitOn)) {
-      updateHUD(ns, moneyHacked);
+      // TODO more generic solution for updateHUD?
+      counterUpdateHud++;
+      if (counterUpdateHud === 10) {
+        updateHUD(ns, moneyHacked);
+        counterUpdateHud = 0;
+      }
       await ns.sleep(100);
     }
     checkServerState(ns, serverToHack, true);
@@ -241,7 +248,7 @@ export const updateBatches = async (ns: NS, servers: { hostName: string, availab
 }
 
 
-export const createHGWBatch = (ns: NS, servers: { hostName: string, availableRAM: number, cpuCores: number }[], serverToHack: string, isLong: boolean | undefined) => {
+export const createHGWBatch = async (ns: NS, servers: { hostName: string, availableRAM: number, cpuCores: number }[], serverToHack: string, isLong: boolean | undefined) => {
   // initialize with assigning a batch with hack threads enough to hack all funds
   // but if the last server (has most ram available) cannot fit that then we can start lower
   let player = ns.getPlayer();
@@ -259,7 +266,7 @@ export const createHGWBatch = (ns: NS, servers: { hostName: string, availableRAM
   let count = 0;
   // get player object, and update throughout while loop to account for later batches!
 
-  let maxLoop = 100000
+  let maxLoop = 1000000;
   // sort ascending number of cores
   servers.sort((a, b) => a.cpuCores - b.cpuCores);
   // start with most optimal, then decrease (expected if no space to fit batch)
@@ -369,6 +376,15 @@ export const createHGWBatch = (ns: NS, servers: { hostName: string, availableRAM
       hackThreads -= 1;
       // flag to indicate that hack threads is changed, and hence new threads ratio has to be calculated
       recalculateThreads = true;
+    }
+
+    if (count % 10000 === 0) {
+      // give some room for other scripts to run inbetween
+      // scheduling all batches causes some lag if much ram is available
+      if (count % 100000 === 0) {
+        ns.tprint('batch manager is scheduling many batches, adding a sleep at batch number ', count)
+      }
+      await ns.sleep(1000);
     }
   }
   if (count === maxLoop) {
@@ -688,35 +704,18 @@ export function checkServerState(ns: NS, serverToHack: string, prompt?: boolean)
 }
 
 export function updateHUD(ns: NS, expectedGain: number) {
-  let doc = eval('document');
-  let hook0 = doc.getElementById('overview-extra-hook-0');
-  let hook1 = doc.getElementById('overview-extra-hook-1');
+  if (!!globals.HUDPort) {
+    let dataToWrite = { sequence: 3, rows: [] as HUDRow[] }
 
-  let hook2 = doc.getElementById('overview-extra-hook-2');
-
-  let headers = [];
-  let values = [];
-
-  headers.push('Hacking server');
-  headers.push('Duration');
-  headers.push('Gain on completion');
-  headers.push('Remaining')
-
-  if (activeBatches.length > 0) {
-    values.push(activeBatches[0].serverToHack);
-    let durationSeconds = Math.round((activeBatches[0].end - activeBatches[0].start) / 1000);
-    values.push(`${ns.formatNumber(durationSeconds, 0)} s`);
-    values.push(ns.formatNumber(expectedGain));
     let remaningSeconds = Math.round((activeBatches[0].end - new Date().getTime()) / 1000);
-    values.push(`${ns.formatNumber(remaningSeconds, 0)} s`)
-  }
-  else {
-    values.push(''); values.push(''); values.push(''); values.push('');
-  }
-  hook0.innerText = headers.join(' \n');
-  hook1.innerText = values.join(' \n');
-}
 
+    dataToWrite.rows.push({ header: 'Hacking server', value: `${activeBatches[0].serverToHack}` });
+    dataToWrite.rows.push({ header: 'Gain on completion', value: `${ns.formatNumber(expectedGain)}` });
+    dataToWrite.rows.push({ header: 'Remaining', value: `${ns.formatNumber(remaningSeconds, 0)} s` });
+
+    ns.writePort(globals.HUDPort, dataToWrite)
+  }
+}
 
 
 

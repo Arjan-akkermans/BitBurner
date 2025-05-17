@@ -8,14 +8,7 @@ import { workHackingForFaction } from './workForFaction';
 
 export async function main(ns: NS) {
 
-
-  let servers = [...getAllServers(ns)];
-  let growHost = 'helios';
-  let player = ns.getPlayer();
-  ns.tprint(ns.getServer(growHost).cpuCores)
-  ns.tprint(getHGWThreads(ns, ns.getServer('phantasy'), ns.getServer(growHost).cpuCores, player));
-
-
+  ns.tprint(JSON.parse(''))
 }
 
 export function rigCasino(ns: NS) {

@@ -1,6 +1,7 @@
 const file = 'data/manageGang.json';
 const names = ['Alfa', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel', 'India', 'Juliett', 'Kilo', 'Lima', 'Mike', 'November', 'Oscar', 'Papa', 'Quebec', 'Romeo', 'Sierra', 'Tango', 'Uniform', 'Victor', 'Whiskey', 'X-ray', 'Yankee', 'Zulu'];
-
+let fileGlobals = 'data/globals.json';
+let globals = {} as Globals;
 type GangData = {
   Members?: {
     Name: string;
@@ -19,6 +20,7 @@ let minWinChanceThreshold = 0.95 // when to assign to warfare
 let minWinChangeStartWarfare = 0.6
 const ticksForWarfare = 10; //TODO this is normally 10 ( 10 cycles per update, 100 cycles for warfare), but can change with bonus time
 export async function main(ns: NS) {
+  globals = JSON.parse(ns.read(fileGlobals))
   data = JSON.parse((ns.read(file) === '') ? '{}' : ns.read(file)) as GangData;
   initData(ns);
   // call above created members, this is just for type inference
@@ -396,27 +398,15 @@ export function cleanUpData(ns: NS) {
   //data.Members = data.Members.filter(member => members.includes(member.Name));
 }
 
-
-
-
 export function updateHUD(ns: NS) {
-  let doc = eval('document');
-  let hook0 = doc.getElementById('overview-extra-hook-0');
-  let hook1 = doc.getElementById('overview-extra-hook-1');
+  globals = JSON.parse(ns.read(fileGlobals))
+  if (!!globals.HUDPort) {
+    let dataToWrite = { sequence: 1, rows: [] as HUDRow[] }
 
-  let hook2 = doc.getElementById('overview-extra-hook-2');
+    dataToWrite.rows.push({ header: 'Tick', value: `${data.CurrentTick}` });
+    dataToWrite.rows.push({ header: 'FoundClash', value: `${data.clashTickFound}` });
+    dataToWrite.rows.push({ header: 'Karma', value: `${ns.getPlayer().karma}` });
 
-  let headers = [];
-  let values = [];
-
-  headers.push('Tick');
-  headers.push('FoundClash');
-  headers.push('Karma');
-
-  values.push(data.CurrentTick);
-  values.push(data.clashTickFound);
-  values.push(ns.getPlayer().karma);
-
-  hook0.innerText = headers.join(' \n');
-  hook1.innerText = values.join(' \n');
+    ns.writePort(globals.HUDPort, dataToWrite)
+  }
 }

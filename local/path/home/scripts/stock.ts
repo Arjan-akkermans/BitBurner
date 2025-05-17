@@ -18,6 +18,8 @@
 
 const file = 'data/stocks.json';
 const logFile = 'data/logs/stocks.txt';
+let fileGlobals = 'data/globals.json';
+let globals = {} as Globals;
 const maxMoneyPerTransaction = 1000000000000 // 1t for now?
 const maxRatioPerTransaction = 0.1 // to ensure not all money spend on 1 stock; 
 const transactionFee = 100000;
@@ -85,6 +87,7 @@ type StockActual = {
 
 let stocksInformation = {} as StocksInformation;
 export async function main(ns: NS) {
+    globals = JSON.parse(ns.read(fileGlobals))
     if (!checkGetAccess(ns)) {
         await waitAndRestart(ns);
     }
@@ -626,46 +629,34 @@ export function getAverage(ns: NS, n: number[]) {
 }
 
 export function updateHUD(ns: NS) {
-    let doc = eval('document');
-    let hook0 = doc.getElementById('overview-extra-hook-0');
-    let hook1 = doc.getElementById('overview-extra-hook-1');
+    globals = JSON.parse(ns.read(fileGlobals))
+    if (!!globals.HUDPort) {
+        let dataToWrite = { sequence: 2, rows: [] as HUDRow[] }
 
-    let hook2 = doc.getElementById('overview-extra-hook-2');
+        dataToWrite.rows.push({ header: 'Valuation', value: `${ns.formatNumber(stocksInformation.totalStocksValue)}` });
+        dataToWrite.rows.push({ header: 'Long earned', value: `${ns.formatNumber(stocksInformation.totalLongEarned)}` });
+        dataToWrite.rows.push({ header: 'Short earned', value: `${ns.formatNumber(stocksInformation.totalShortEarned)}` });
+        dataToWrite.rows.push({ header: 'Short CompletedCycles', value: `${stocksInformation.numberOfCyclesCompleted}` });
+        dataToWrite.rows.push({ header: 'Tick', value: `${stocksInformation.currentTick}` });
 
-    let headers = [];
-    let values = [];
-
-    headers.push('Valuation');
-    headers.push('Long earned');
-    headers.push('Short earned');
-    headers.push('Completed cycles:')
-    headers.push('Tick');
-
-
-    if (stocksInformation.inversionTick) {
-        headers.push('Inversion Tick');
+        let h = 'Inversion Tick';
+        if (!stocksInformation.inversionTick) {
+            h = 'Predicted ' + h;
+        }
+        let v = stocksInformation.inversionTick ?? stocksInformation.inversionTickPredicted ?? -1
+        ns.writePort(globals.HUDPort, dataToWrite)
     }
-    else {
-        headers.push('Predicted Inversion Tick');
-    }
-
-    values.push(ns.formatNumber(stocksInformation.totalStocksValue));
-    values.push(ns.formatNumber(stocksInformation.totalLongEarned));
-    values.push(ns.formatNumber(stocksInformation.totalShortEarned));
-    values.push(stocksInformation.numberOfCyclesCompleted);
-    values.push(stocksInformation.currentTick);
-    values.push(stocksInformation.inversionTick ?? stocksInformation.inversionTickPredicted ?? -1);
 
 
     // debug???
+    /*
     let debug = true;
     if (stocksInformation.stocks && debug) {
         headers.push('predicted inversion tick');
         values.push(stocksInformation.inversionTickPredicted ?? -1);
         headers.push(' predicted inversions');
         values.push(inversionsBasedOnPrediction)
-        /*headers.push('max observed average (index)');
-        values.push(`${ns.formatNumber(currentMaxInversionsAverage)} (${inversionsMaxCycleIndex})`);*/
+
         headers.push('stock to hack');
         values.push(`${stockToHack.symbol ?? 'n/a'} ${serverToHack ?? ''}`);
         if (stockToHack && stockToHack.actuals && stockToHack.actuals.length > 0) {
@@ -707,10 +698,8 @@ export function updateHUD(ns: NS) {
             values.push(`${numberOfForecasstsCorrect} / ${stocksInformation.stocks.length}`);
         }
 
-    }
+    }*/
 
-    hook0.innerText = headers.join(' \n');
-    hook1.innerText = values.join(' \n');
 }
 
 export function debug(ns: NS) {

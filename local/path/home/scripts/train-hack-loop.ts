@@ -2,11 +2,17 @@ import { getAllServers } from './utils'
 
 export async function main(ns: NS) {
 
-  await trainHackLoop(ns, ns.args[0] as number, (ns.args[1] ?? 0) as number);
+  await trainHackLoop(ns, ns.args[0] as number, (ns.args[1]) as number);
 
 }
 
-export async function trainHackLoop(ns: NS, limit: number, ramToKeepFreeHome: number) {
+export async function trainHackLoop(ns: NS, limit?: number, ramToKeepFreeHome?: number) {
+  if (ramToKeepFreeHome === undefined) {
+    ramToKeepFreeHome = 0;
+  }
+  if (limit === undefined) {
+    limit = ns.getServerRequiredHackingLevel('w0r1d_d43m0n');
+  }
   const allServers = getAllServers(ns);
   const costWeak = ns.getScriptRam('scripts/weaken-single.ts')
   const costHack = ns.getScriptRam('scripts/hack-single.ts')
@@ -29,7 +35,7 @@ export async function trainHackLoop(ns: NS, limit: number, ramToKeepFreeHome: nu
   if (!ns.hasRootAccess(serverToHack)) {
     serverToHack = 'n00dles';
     limit = ns.getHackingLevel() + 1;
-  } 
+  }
 
   while (ns.getHackingLevel() < limit) {
     let cost = 1.75;

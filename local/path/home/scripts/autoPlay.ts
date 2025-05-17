@@ -25,6 +25,13 @@ export async function main(ns: NS) {
     const gangScript = 'scripts/manageGang.ts';
     if (!ns.isRunning(gangScript)) { ns.run(gangScript); }
   }
+  const ipvGOScript = 'scripts/IPvGO.ts';
+  if (!ns.isRunning(ipvGOScript)) { ns.run(ipvGOScript); }
+  const updateHUDScript = 'scripts/updateHUD.ts';
+  if (!ns.isRunning(updateHUDScript)) { ns.run(updateHUDScript); }
+
+
+
   while (true) {
     counter++;
     // as start activity train skills and then do crime!
@@ -43,8 +50,7 @@ export async function main(ns: NS) {
 
     let trainHack = globals.trainHack;
     if (trainHack) {
-      //TODO HARDODED LEVEL?
-      await run(ns, 'scripts/train-hack-loop.ts', [6000]);
+      await run(ns, 'scripts/train-hack-loop.ts');
     }
     else {
       let pid = await run(ns, 'scripts/batch-manager-loop.ts', [hardCodedServer ? hardCodedServer : serverToHack, true, counter === 1])

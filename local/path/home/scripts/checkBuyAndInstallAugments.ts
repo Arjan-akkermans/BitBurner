@@ -12,11 +12,15 @@ export async function main(ns: NS) {
   }
   const ownedAugments = ns.singularity.getOwnedAugmentations()
   if (ownedAugments.includes('The Red Pill') &&
-    (ns.getHackingLevel() >= 0.8 * ns.getServerRequiredHackingLevel('w0r1d_d43m0n'))) {
+    (ns.getHackingLevel() >= ns.getServerRequiredHackingLevel('w0r1d_d43m0n'))) {
     ns.run('scripts/endBitnode.ts')
     return;
   }
-  else if (ownedAugments.includes('The Red Pill')) {
+  else if (ownedAugments.includes('The Red Pill') &&
+    // if hacking level is close to the required train it,
+    // but otherwise keep playing as normal, i.e. we can still buy more servers and NFS
+    // which will increase speed more than only training hacking
+    ns.getHackingLevel() >= 0.7 * ns.getServerRequiredHackingLevel('w0r1d_d43m0n')) {
     globals.trainHack = true;
     ns.write(file, JSON.stringify(globals), 'w')
     return;
@@ -40,13 +44,27 @@ export async function main(ns: NS) {
 
   // if already 1 hour without restart, start saving some cash and then install
   // just here to ensure some progress is made
-  if (currentTime - ns.getResetInfo().lastAugReset > 1000 * 60 * 60) {
+  let thresholdTimeToReset = 1000 * 60 * 60;
+  if (ns.getBitNodeMultipliers().FactionWorkRepGain < 1) {
+    // the threshold times are mostly aimed towards normal work rep gain from hacking
+    // In BitNode 14 with RepGain at 0.2, this lead to too early resets
+    // Therefore this condition aims to give more time if work rep gain is low
+    // this factor scales from 1 to 5,i.e.
+    // rep gain 1 -> 1
+    // rep gain 0.8 -> 1.38
+    // rep gain 0.5 -> 2.24
+    // rep gain 0.2 -> 3.62
+    // rep gain 0 -> 5
+    thresholdTimeToReset *= Math.pow(5, 1 - ns.getBitNodeMultipliers().FactionWorkRepGain)
+  }
+
+  if (currentTime - ns.getResetInfo().lastAugReset > thresholdTimeToReset) {
 
     globals.skip = true;
   }
 
-  // add case here such that we reset after 1.5 hours???
-  if (currentTime - ns.getResetInfo().lastAugReset > 1000 * 60 * 60 * 1.5
+  // add case here such that we reset after hours???
+  if (currentTime - ns.getResetInfo().lastAugReset > thresholdTimeToReset * 1.5
     && getAugmentsCost(ns, [neuroFluxGovernor]) <= ns.getServerMoneyAvailable('home')) {
     await buy(ns, factionName ?? ns.enums.FactionName.SlumSnakes, []);
   }
@@ -147,8 +165,9 @@ export async function main(ns: NS) {
       const favorLimit = ns.getFavorToDonate();
       // if not enough rep to buy all:
       // donate something if we can (do nothing else such that next time the loop is called we might buy augments))
+      // TODO, define proper amount of money to donate based on which augments to buy?
       if (ns.singularity.getFactionFavor(factionName) >= favorLimit) {
-        ns.singularity.donateToFaction(factionName, ns.getServerMoneyAvailable('home') * 0.10)
+        ns.singularity.donateToFaction(factionName, ns.getServerMoneyAvailable('home') * 0.25)
       }
       // if its not possible to donate yet, check if we can reset with a less set without the expensive augments
       // which enables us to donate after installing
@@ -465,6 +484,7 @@ export function getAugmentsUnilUnique(ns: NS, faction: string) {
   if (faction === ns.enums.FactionName.TianDiHui) {
 
     let repGainAugments = ns.singularity.getAugmentationsFromFaction(ns.enums.FactionName.TianDiHui);
+    repGainAugments = repGainAugments.filter((r) => r !== neuroFluxGovernor);
     repGainAugments = repGainAugments.filter((augmentOfT) => (ns.singularity.getAugmentationStats(augmentOfT).faction_rep ?? 1) > 1);
 
     // if there is unowned rep gain, then return all of them as these are needed early game

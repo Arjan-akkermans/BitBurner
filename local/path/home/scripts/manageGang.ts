@@ -14,12 +14,15 @@ type GangData = {
   previousPower: number,
   previousTerritory: number
 };
+// used to switch around tasks as to not get stuck
+const switchTaskAfter = 1000 * 60 * 1; // 1 minute
 let data = {} as GangData;
 let currentTime = new Date().getTime();
 let minWinChanceThreshold = 0.95 // when to assign to warfare
 let minWinChangeStartWarfare = 0.6
 const ticksForWarfare = 10; //TODO this is normally 10 ( 10 cycles per update, 100 cycles for warfare), but can change with bonus time
 export async function main(ns: NS) {
+  currentTime = new Date().getTime();
   globals = JSON.parse(ns.read(fileGlobals))
   data = JSON.parse((ns.read(file) === '') ? '{}' : ns.read(file)) as GangData;
   initData(ns);
@@ -28,7 +31,6 @@ export async function main(ns: NS) {
     return;
   }
   if (!getCreateInGang(ns)) {
-    await waitAndRestart(ns);
     return
   }
   let counter = 0;
@@ -59,10 +61,16 @@ export async function main(ns: NS) {
     const i = data.Members?.findIndex((memberData) => memberData.Name === member) ?? -1;
     if (i !== -1) {
       if (data.CurrentTick === 1 && data.clashTickFound) {
-        ns.gang.setMemberTask(member, data.Members[i].PreviousTask);
+        let taskToAssign = data.Members[i].PreviousTask;
+        if (taskToAssign === 'Unassigned') {
+          getMoney(ns, memberInformation, 0);
+        }
+        else {
+          ns.gang.setMemberTask(member, data.Members[i].PreviousTask);
+        }
       }
       if (data.Members[i].PreviousTask === 'Train Combat'
-        && (currentTime - data.Members[i].StartTrainingSinceAscend) < 1000 * 60 * 5
+        && (currentTime - data.Members[i].StartTrainingSinceAscend) < switchTaskAfter
       ) {
         trainMember(ns, memberInformation);
         continue;
@@ -75,7 +83,7 @@ export async function main(ns: NS) {
         continue;
       }
       // after reset immidiately make some money to speed up initial grinding
-      if (new Date().getTime() - ns.getResetInfo().lastAugReset < 1000 * 60) {
+      if (new Date().getTime() - ns.getResetInfo().lastAugReset < switchTaskAfter) {
         getMoney(ns, memberInformation, 0);
         continue
       }
@@ -88,7 +96,7 @@ export async function main(ns: NS) {
 
           let timeSinceLastTask = (currentTime - data.Members[i].PreviousTaskStart);
           if (data.Members[i].PreviousTask === 'Train Combat') {
-            if (timeSinceLastTask > 1000 * 60 * 5) {
+            if (timeSinceLastTask > switchTaskAfter) {
               // there is no need to get anymore respect if discount is already a high factor
               // logic above already assigns respect if thats needed to drop wanted penalty
               if (getDiscount(ns) < 10000 && Math.random() >= 0.5) {
@@ -101,7 +109,7 @@ export async function main(ns: NS) {
             }
           }
           else {
-            if (timeSinceLastTask > 1000 * 60 * 5 || ns.gang.getMemberInformation(member).task === 'Unassigned') {
+            if (timeSinceLastTask > switchTaskAfter || ns.gang.getMemberInformation(member).task === 'Unassigned') {
               trainMember(ns, memberInformation);
             }
           }
@@ -405,7 +413,6 @@ export function updateHUD(ns: NS) {
 
     dataToWrite.rows.push({ header: 'Tick', value: `${data.CurrentTick}` });
     dataToWrite.rows.push({ header: 'FoundClash', value: `${data.clashTickFound}` });
-    dataToWrite.rows.push({ header: 'Karma', value: `${ns.getPlayer().karma}` });
 
     ns.writePort(globals.HUDPort, dataToWrite)
   }

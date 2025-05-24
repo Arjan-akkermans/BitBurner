@@ -7,9 +7,6 @@ let file = 'data/globals.json';
 const neuroFluxGovernor = 'NeuroFlux Governor'
 export async function main(ns: NS) {
   let globals = JSON.parse(ns.read(file)) as Globals
-  if (globals.activityType === 'CLASS') {
-    return
-  }
   const ownedAugments = ns.singularity.getOwnedAugmentations()
   if (ownedAugments.includes('The Red Pill') &&
     (ns.getHackingLevel() >= ns.getServerRequiredHackingLevel('w0r1d_d43m0n'))) {
@@ -17,6 +14,8 @@ export async function main(ns: NS) {
     return;
   }
   else if (ownedAugments.includes('The Red Pill') &&
+    ns.singularity.getDarkwebPrograms().length > 0 &&// filter out case not having TOR
+    ns.singularity.getDarkwebPrograms().every((p) => ns.fileExists(p)) &&
     // if hacking level is close to the required train it,
     // but otherwise keep playing as normal, i.e. we can still buy more servers and NFS
     // which will increase speed more than only training hacking
@@ -363,12 +362,12 @@ export async function buyAugmentsFromGang(ns: NS) {
     }
     return diff
   })
-
+  let amountUnOwned = augmentsOfGang.length;
   // filter by rep
   let augmentsFiltered = augmentsOfGang.filter((augment) => ns.singularity.getAugmentationRepReq(augment) <= ns.singularity.getFactionRep(factionName))
   // filter by owned
   augmentsFiltered = augmentsFiltered.filter((augment) => { return ownedAugments.every((ownedAugment) => { return ownedAugment !== augment }) });
-  let amountUnOwned = augmentsFiltered.length;
+
   // filter by dependencies, keep it simple just filter on all prereqs owned
   augmentsFiltered = augmentsFiltered.filter((augment) => { return ns.singularity.getAugmentationPrereq(augment).every((preReq) => { return ownedAugments.some((ownedAugment) => ownedAugment === preReq) }) })
   // fiter by money
@@ -381,23 +380,15 @@ export async function buyAugmentsFromGang(ns: NS) {
   let i = Math.min(augmentsFiltered.length, 5);
   // Case to ensure that if the minimum is not available the remaining augments will still be bought
   i = Math.min(i, amountUnOwned);
-  let allAugmentsRemainingLength = augmentsFiltered.length;
   if (augmentsFiltered.length >= i) {
 
     let augmentsToBuy = augmentsFiltered.slice(0, i);
     if (hasMoneyForAugments(ns, augmentsToBuy)) {
-      while (hasMoneyForAugments(ns, augmentsToBuy) && i < 1000 && i < augmentsFiltered.length) {
-
-        augmentsToBuy.push(augmentsFiltered[i])
-        // TODO this is ugly way to cover the case where all augments can be bought
-        if (augmentsToBuy.length === allAugmentsRemainingLength && hasMoneyForAugments(ns, augmentsToBuy)) {
-          await buy(ns, factionName, augmentsToBuy);
-          return true;
-        }
-        i++
+      // keep adding augments untill there is no money to buy them
+      while (i < augmentsFiltered.length && hasMoneyForAugments(ns, augmentsToBuy.concat([augmentsFiltered[i]])) && i < 1000) {
+        augmentsToBuy.push(augmentsFiltered[i]);
+        i++;
       }
-
-      augmentsToBuy = augmentsToBuy.slice(0, i - 1);
       await buy(ns, factionName, augmentsToBuy);
       return true;
     }
@@ -470,6 +461,37 @@ export function addToBuy(ns: NS, augments: string[]) {
       // cut off first augment so we do not consider it again
       newAugmentsToConsider = newAugmentsToConsider.filter((n) => n !== augmentsThisIteration[0])
     }
+  }
+
+  // donate and add augments. Not really expected to be used a lot, but this logic is at least needed for the last bitrunners augment!
+  // get all augments which are available and not yet owned/in input set
+
+  // logic is not the best, there is no check for 'optimal' nor whether we can actually buy augments after donating
+  // but its such an edge case that I expect its should be possible to just donate and buy all missing arguments (if any...)
+
+
+  for (let faction of factions) {
+    if (ns.singularity.getFactionFavor(faction) < ns.getFavorToDonate()) { continue }
+
+    let augmentsOfFaction = ns.singularity.getAugmentationsFromFaction(faction);
+    for (let augment of augmentsOfFaction) {
+      let factionRep = ns.singularity.getFactionRep(faction);
+      if (!ownedAugmentations.includes(augment)) {
+        let repRequirement = ns.singularity.getAugmentationRepReq(augment)
+        // formula for gain is // repGained = (amt / CONSTANTS.DonateMoneyToRepDivisor) * person.mults.faction_rep * currentNodeMults.FactionWorkRepGain;
+
+        let repToGain = repRequirement - factionRep;
+        let workRepGainMult = ns.getBitNodeMultipliers().FactionWorkRepGain;
+        let factionRepMult = ns.getPlayer().mults.faction_rep;
+        let amountToDonate = repToGain * 1e6 / workRepGainMult / factionRepMult
+
+        let donated = ns.singularity.donateToFaction(faction, amountToDonate);
+        if (donated) {
+          augmentsToBuy.push(augment);
+        }
+      }
+    }
+
   }
   return augmentsToBuy;
 }

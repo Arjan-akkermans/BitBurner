@@ -21,20 +21,15 @@ export async function main(ns: NS) {
   }
 
   //await run(ns, 'scripts/stock.ts');
-  if (globals.startGang) {
-    const gangScript = 'scripts/manageGang.ts';
-    if (!ns.isRunning(gangScript)) { ns.run(gangScript); }
-  }
-  const ipvGOScript = 'scripts/IPvGO.ts';
-  if (!ns.isRunning(ipvGOScript)) { ns.run(ipvGOScript); }
-  const updateHUDScript = 'scripts/updateHUD.ts';
-  if (!ns.isRunning(updateHUDScript)) { ns.run(updateHUDScript); }
-
-
 
   while (true) {
+    await run(ns, 'scripts/manageGang.ts', undefined, true);
+    await run(ns, 'scripts/IPvGO.ts', undefined, true);
+    await run(ns, 'scripts/updateHUD.ts', undefined, true);
+
     counter++;
     // as start activity train skills and then do crime!
+    await run(ns, 'scripts/sleeves.ts');
     await run(ns, 'scripts/chooseActivity.ts');
     globals = JSON.parse(ns.read(file))
     if (ns.getServerMaxRam('home') - ns.getServerUsedRam('home') >= 24) {
@@ -62,7 +57,10 @@ export async function main(ns: NS) {
       if (dataRead) {
         serverToHack = dataRead.serverToHack;
         let moneyStolen = dataRead.moneyStolen;
-        globals.lastBatchMoneyGain = moneyStolen;
+        if (moneyStolen > 0) {
+          // if not a HWG batch then money is 0, so we do not want to have that information, the older non zero value is more relevant
+          globals.lastBatchMoneyGain = moneyStolen;
+        }
         ns.write('data/globals.json', JSON.stringify(globals), 'w');
         if (serverToHack = 'NULL PORT DATA') {
           serverToHack = '';
@@ -105,13 +103,30 @@ export async function main(ns: NS) {
 }
 
 /*
-* runs a script, returns a promise which ends if the script ended
+
 */
-export async function run(ns: NS, scriptName: string, args?: ScriptArg[]) {
+/**
+ *
+ *
+ * @param scriptName
+ * @param {ScriptArg[]} [args]
+ * @param  [scriptRunsItselfAgain=false] if TRUE then the called script will run itself hence check if its already running, and do not wait on it to finish
+ * @return after the script has ended. if checkAlreadyRunning is true, then the  
+ */
+export async function run(ns: NS, scriptName: string, args?: ScriptArg[], scriptRunsItselfAgain = false) {
   if (ns.getServerMaxRam('home') - ns.getServerUsedRam('home') < ns.getScriptRam(scriptName)) {
     return
   }
+  if (scriptRunsItselfAgain && ns.isRunning(scriptName)) {
+    return
+  }
+
   const pid = ns.run(scriptName, 1, ...(args ?? []));
+  if (scriptRunsItselfAgain) {
+    // give control to the script, this way if the script terminates the RAM is freed
+    await ns.sleep(0);
+    return pid;
+  }
   while (ns.isRunning(pid)) {
     await ns.sleep(100)
   }
@@ -127,6 +142,9 @@ export function resetGlobals(ns: NS) {
   globals.activityType = undefined;
   globals.trainHack = false;
   globals.reset = false;
+  globals.lastBatchMoneyGain = 0;
   globals.factionToWorkFor = '';
+  globals.trainingTime = undefined;
+  globals.trainForCombatFactions = false; // there currently is no logic to set this to TRUE, has to be done manually
   ns.write('data/globals.json', JSON.stringify(globals), 'w');
 }

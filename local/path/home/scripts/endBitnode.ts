@@ -18,14 +18,15 @@ export async function main(ns: NS) {
     infectServer(ns, ns.getServer(server));
     await ns.sleep(100);
     await run(ns, 'scripts/purchasePrograms.ts');
-
+    await ns.sleep(100);
+    infectServer(ns, ns.getServer(server));
     if (ns.hasRootAccess(server)) {
       ns.write('data/log.buyAugments.txt', (new Date().getTime) + ' ending bitnode / n', 'a')
 
       resetGlobals(ns);
       resetStocks(ns);
       resetGangData(ns);
-      ns.singularity.destroyW0r1dD43m0n(14,  'scripts/autoPlay.ts');
+      ns.singularity.destroyW0r1dD43m0n(12, 'scripts/autoPlay.ts');
     }
   }
 

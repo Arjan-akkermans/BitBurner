@@ -8,7 +8,24 @@ import { workHackingForFaction } from './workForFaction';
 
 export async function main(ns: NS) {
 
-  ns.tprint(JSON.parse(''))
+  let v = ns.go.analysis.getValidMoves();
+  let move1: { x: number, y: number } = undefined
+  let move2: { x: number, y: number } = undefined
+  for (let x = 0; x < v.length; x++) {
+    for (let y = 0; y < v.length; y++) {
+      if (v[x][y]) {
+        if (move1 === undefined) {
+          move1 = { x, y }
+        }
+        else {
+          move2 = { x, y };
+          break
+        }
+      }
+    }
+  }
+  let result = await ns.go.cheat.playTwoMoves(move1.x, move1.y, move2.x, move2.y);
+  ns.tprint(result);
 }
 
 export function rigCasino(ns: NS) {

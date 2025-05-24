@@ -67,11 +67,13 @@ export async function upgradeHacknet(ns: NS) {
         coreDiff = difference / upgradeCost;
       } if (ns.hacknet.getCacheUpgradeCost(i, 1) <= ns.getServerMoneyAvailable("home") * limit) {
         let upgradedHacknet = { ...currentHacknet };
-        upgradedHacknet.cache = upgradedHacknet.cache + 1;
-        const difference = getProductionDifference(ns, upgradedHacknet, currentHacknet);
-        let upgradeCost = ns.hacknet.getCacheUpgradeCost(i, 1);
+        if (upgradedHacknet.cache !== undefined) {
+          upgradedHacknet.cache = upgradedHacknet.cache + 1;
+          const difference = getProductionDifference(ns, upgradedHacknet, currentHacknet);
+          let upgradeCost = ns.hacknet.getCacheUpgradeCost(i, 1);
 
-        cacheDiff = difference / upgradeCost;
+          cacheDiff = difference / upgradeCost;
+        }
       }
 
     }
@@ -188,6 +190,8 @@ export function getNodeCost(ns: NS, node: NodeStats) {
   cost += ns.formulas.hacknetServers.levelUpgradeCost(1, node.level - 1, mults.hacknet_node_level_cost);
   cost += ns.formulas.hacknetServers.ramUpgradeCost(1, ramLevels, mults.hacknet_node_ram_cost);
   cost += ns.formulas.hacknetServers.coreUpgradeCost(1, node.cores - 1, mults.hacknet_node_core_cost);
-  cost += ns.formulas.hacknetServers.cacheUpgradeCost(1, node.cache - 1);
+  if (node.cache !== undefined) {
+    cost += ns.formulas.hacknetServers.cacheUpgradeCost(1, node.cache - 1);
+  }
   return cost;
 }

@@ -139,3 +139,6 @@ build/
 
 .vscode/*
 !.vscode/launch.json
+
+# folder used for storing data and logging
+local/path/home/data
